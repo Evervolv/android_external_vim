@@ -19,13 +19,15 @@ LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/auto
 
 LOCAL_SHARED_LIBRARIES += \
-	libncurses
+	libncurses \
+	libdl
 
 LOCAL_CFLAGS += \
 	-DHAVE_CONFIG_H \
 	-lncurses
 
 LOCAL_MODULE := vim
+LOCAL_MODULE_TAGS := eng
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 include $(BUILD_EXECUTABLE)
 

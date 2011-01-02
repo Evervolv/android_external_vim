@@ -7,7 +7,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := vim
 
 runtime_files := \
-	$(shell cd $(LOCAL_PATH) && ls -1 {colors,keymap,syntax}/*.vim) \
+	$(shell cd $(LOCAL_PATH) && ls -1 colors/*.vim) \
 	scripts.vim \
 	indent.vim \
 	indoff.vim \

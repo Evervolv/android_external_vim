@@ -14,12 +14,16 @@ runtime_files := \
 	filetype.vim \
 	ftoff.vim 
 
+VIM_SHARED := $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/
+VIM_CONFIGS := $(addprefix $(LOCAL_PATH)/runtime/,$(runtime_files))
+$(VIM_CONFIGS): VIM_BINARY := $(LOCAL_MODULE)
+$(VIM_CONFIGS): $(LOCAL_INSTALLED_MODULE)
+	@echo "Install: $@ -> $(VIM_SHARED)"
+	@mkdir -p $(VIM_SHARED)
+	$(hide) cp $@ $(VIM_SHARED)
 
-copy_to := $(addprefix $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/,$(runtime_files))
-$(copy_to) : PRIVATE_MODULE := system_sharedir
-$(copy_to) : $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/% : $(LOCAL_PATH)/% | $(ACP)
-	$(transform-prebuilt-to-target)
+ALL_DEFAULT_INSTALLED_MODULES += $(VIM_CONFIGS)
 
-
-ALL_PREBUILT += $(copy_to)
+ALL_MODULES.$(LOCAL_MODULE).INSTALLED := \
+    $(ALL_MODULES.$(LOCAL_MODULE).INSTALLED) $(VIM_CONFIGS)
 

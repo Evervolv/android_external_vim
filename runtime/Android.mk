@@ -15,7 +15,7 @@ runtime_files := \
 	ftoff.vim 
 
 VIM_SHARED := $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/
-VIM_CONFIGS := $(addprefix $(LOCAL_PATH)/runtime/,$(runtime_files))
+VIM_CONFIGS := $(addprefix $(LOCAL_PATH)/,$(runtime_files))
 $(VIM_CONFIGS): VIM_BINARY := $(LOCAL_MODULE)
 $(VIM_CONFIGS): $(LOCAL_INSTALLED_MODULE)
 	@echo "Install: $@ -> $(VIM_SHARED)"

@@ -18,7 +18,7 @@ VIM_SHARED := $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/
 VIM_CONFIGS := $(addprefix $(LOCAL_PATH)/,$(runtime_files))
 $(VIM_CONFIGS): VIM_BINARY := $(LOCAL_MODULE)
 $(VIM_CONFIGS): $(LOCAL_INSTALLED_MODULE)
-	@echo "Install: $@ -> $(VIM_SHARED)"
+#	@echo "Install: $@ -> $(VIM_SHARED)"
 	@mkdir -p $(VIM_SHARED)
 	$(hide) cp $@ $(VIM_SHARED)
 

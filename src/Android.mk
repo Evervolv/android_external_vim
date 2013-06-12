@@ -31,13 +31,3 @@ LOCAL_MODULE_TAGS := eng
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 include $(BUILD_EXECUTABLE)
 
-# ========================================================
-SYMLINKS := $(TARGET_OUT_OPTIONAL_EXECUTABLES)/vi
-$(SYMLINKS): VIM_BINARY := $(LOCAL_MODULE)
-$(SYMLINKS): $(LOCAL_INSTALLED_MODULE)
-	@echo "Symlink: $@ -> $(VIM_BINARY)"
-	@mkdir -p $(dir $@)
-	@rm -rf $@
-	$(hide) ln -sf $(VIM_BINARY) $@
-
-ALL_DEFAULT_INSTALLED_MODULES += $(SYMLINKS)

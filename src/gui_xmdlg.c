@@ -10,7 +10,7 @@
 /*
  * (C) 2001,2005 by Marcin Dalecki <martin@dalecki.de>
  *
- * Implementation of dialogue functions for the Motif GUI variant.
+ * Implementation of dialog functions for the Motif GUI variant.
  *
  * Note about Lesstif: Apparently lesstif doesn't get the widget layout right,
  * when using a dynamic scrollbar policy.
@@ -168,7 +168,7 @@ name_part(char *font, char *buf)
     get_part(font, 2, buf2);
     get_part(font, 1, buf3);
 
-    if (strlen(buf3))
+    if (*buf3 != NUL)
 	vim_snprintf(buf, TEMP_BUF_SIZE, "%s (%s)", buf2, buf3);
     else
 	vim_snprintf(buf, TEMP_BUF_SIZE, "%s", buf2);
@@ -225,7 +225,7 @@ size_part(char *font, char *buf, int inPixels)
     if (inPixels)
     {
 	get_part(font, 7, buf);
-	if (strlen(buf) > 0)
+	if (*buf != NUL)
 	{
 	    size = atoi(buf);
 	    sprintf(buf, "%3d", size);
@@ -234,7 +234,7 @@ size_part(char *font, char *buf, int inPixels)
     else
     {
 	get_part(font, 8, buf);
-	if (strlen(buf) > 0)
+	if (*buf != NUL)
 	{
 	    size = atoi(buf);
 	    temp = (float)size / 10.0;
@@ -261,7 +261,7 @@ encoding_part(char *font, char *buf)
     get_part(font, 13, buf1);
     get_part(font, 14, buf2);
 
-    if (strlen(buf1) > 0 && strlen(buf2))
+    if (*buf1 != NUL && *buf2 != NUL)
 	vim_snprintf(buf, TEMP_BUF_SIZE, "%s-%s", buf1, buf2);
     if (!strcmp(buf, " "))
 	strcpy(buf, "-");
@@ -369,10 +369,10 @@ fill_lists(enum ListSpecifier fix, SharedFontSelData *data)
     char	buf[TEMP_BUF_SIZE];
     XmString	items[MAX_ENTRIES_IN_LIST];
     int		i;
-    int		index;
+    int		idx;
 
-    for (index = (int)ENCODING; index < (int)NONE; ++index)
-	count[index] = 0;
+    for (idx = (int)ENCODING; idx < (int)NONE; ++idx)
+	count[idx] = 0;
 
     /* First we insert the wild char into every single list. */
     if (fix != ENCODING)
@@ -448,7 +448,7 @@ fill_lists(enum ListSpecifier fix, SharedFontSelData *data)
 
 	    items[i] = XmStringCreateLocalized(list[ENCODING][i]);
 
-	    if (i < n_items)
+	    if (i < (int)n_items)
 	    {
 		/* recycle old button */
 		XtVaSetValues(children[i],
@@ -481,7 +481,7 @@ fill_lists(enum ListSpecifier fix, SharedFontSelData *data)
 
 	/* Destroy all the outstanding menu items.
 	 */
-	for (i = count[ENCODING]; i < n_items; ++i)
+	for (i = count[ENCODING]; i < (int)n_items; ++i)
 	{
 	    XtUnmanageChild(children[i]);
 	    XtDestroyWidget(children[i]);
@@ -503,14 +503,14 @@ fill_lists(enum ListSpecifier fix, SharedFontSelData *data)
     /*
      * Now loop trough the remaining lists and set them up.
      */
-    for (index = (int)NAME; index < (int)NONE; ++index)
+    for (idx = (int)NAME; idx < (int)NONE; ++idx)
     {
 	Widget w;
 
-	if (fix == (enum ListSpecifier)index)
+	if (fix == (enum ListSpecifier)idx)
 	    continue;
 
-	switch ((enum ListSpecifier)index)
+	switch ((enum ListSpecifier)idx)
 	{
 	    case NAME:
 		w = data->list[NAME];
@@ -525,28 +525,27 @@ fill_lists(enum ListSpecifier fix, SharedFontSelData *data)
 		w = (Widget)0;	/* for lint */
 	}
 
-	for (i = 0; i < count[index]; ++i)
+	for (i = 0; i < count[idx]; ++i)
 	{
-	    items[i] = XmStringCreateLocalized(list[index][i]);
-	    XtFree(list[index][i]);
+	    items[i] = XmStringCreateLocalized(list[idx][i]);
+	    XtFree(list[idx][i]);
 	}
 	XmListDeleteAllItems(w);
-	XmListAddItems(w, items, count[index], 1);
-	if (data->sel[index])
+	XmListAddItems(w, items, count[idx], 1);
+	if (data->sel[idx])
 	{
 	    XmStringFree(items[0]);
-	    items[0] = XmStringCreateLocalized(data->sel[index]);
+	    items[0] = XmStringCreateLocalized(data->sel[idx]);
 	    XmListSelectItem(w, items[0], False);
 	    XmListSetBottomItem(w, items[0]);
 	}
-	for (i = 0; i < count[index]; ++i)
+	for (i = 0; i < count[idx]; ++i)
 	    XmStringFree(items[i]);
     }
 }
 
-/*ARGSUSED*/
     static void
-stoggle_callback(Widget w,
+stoggle_callback(Widget w UNUSED,
 	SharedFontSelData *data,
 	XmToggleButtonCallbackStruct *call_data)
 {
@@ -634,16 +633,19 @@ do_choice(Widget w,
 	data->sel[which] = XtNewString(sel);
     else
     {
-	XtFree(data->sel[which]);
 	if (!strcmp(data->sel[which], sel))
 	{
 	    /* unselecting current selection */
+	    XtFree(data->sel[which]);
 	    data->sel[which] = NULL;
 	    if (w)
 		XmListDeselectItem(w, call_data->item);
 	}
 	else
+	{
+	    XtFree(data->sel[which]);
 	    data->sel[which] = XtNewString(sel);
+	}
     }
     XtFree(sel);
 
@@ -695,25 +697,24 @@ do_choice(Widget w,
 	int	    n;
 	XmString    str;
 	Arg	    args[4];
-	char	    *msg = _("no specific match");
+	char	    *nomatch_msg = _("no specific match");
 
 	n = 0;
-	str = XmStringCreateLocalized(msg);
+	str = XmStringCreateLocalized(nomatch_msg);
 	XtSetArg(args[n], XmNlabelString, str); ++n;
 	XtSetValues(data->sample, args, n);
 	apply_fontlist(data->sample);
-	XmTextSetString(data->name, msg);
+	XmTextSetString(data->name, nomatch_msg);
 	XmStringFree(str);
 
 	return False;
     }
 }
 
-/*ARGSUSED*/
     static void
 encoding_callback(Widget w,
 	SharedFontSelData *data,
-	XtPointer dummy)
+	XtPointer dummy UNUSED)
 {
     XmString str;
     XmListCallbackStruct fake_data;
@@ -752,11 +753,10 @@ size_callback(Widget w,
     do_choice(w, data, call_data, SIZE);
 }
 
-/*ARGSUSED*/
     static void
-cancel_callback(Widget w,
+cancel_callback(Widget w UNUSED,
 	SharedFontSelData *data,
-	XmListCallbackStruct *call_data)
+	XmListCallbackStruct *call_data UNUSED)
 {
     if (data->sel[ENCODING])
     {
@@ -789,11 +789,10 @@ cancel_callback(Widget w,
     data->exit = True;
 }
 
-/*ARGSUSED*/
     static void
-ok_callback(Widget w,
+ok_callback(Widget w UNUSED,
 	SharedFontSelData *data,
-	XmPushButtonCallbackStruct *call_data)
+	XmPushButtonCallbackStruct *call_data UNUSED)
 {
     char    *pattern;
     char    **name;
@@ -886,21 +885,21 @@ gui_xm_select_font(char_u *current)
     {
 	int	i;
 	int	max;
-	int	index = 0;
+	int	idx = 0;
 	int	size;
-	char	str[128];
+	char	buf[128];
 
 	for (i = 0, max = 0; i < data->num; i++)
 	{
-	    get_part(fn(data, i), 7, str);
-	    size = atoi(str);
+	    get_part(fn(data, i), 7, buf);
+	    size = atoi(buf);
 	    if ((size > max) && (size < MAX_DISPLAY_SIZE))
 	    {
-		index = i;
+		idx = i;
 		max = size;
 	    }
 	}
-	strcpy(big_font, fn(data, index));
+	strcpy(big_font, fn(data, idx));
     }
     data->old = XLoadQueryFont(XtDisplay(parent), big_font);
     data->old_list = gui_motif_create_fontlist(data->old);
@@ -1217,28 +1216,28 @@ gui_xm_select_font(char_u *current)
 
 	if (i != 0)
 	{
-	    char name[TEMP_BUF_SIZE];
-	    char style[TEMP_BUF_SIZE];
-	    char size[TEMP_BUF_SIZE];
-	    char encoding[TEMP_BUF_SIZE];
+	    char namebuf[TEMP_BUF_SIZE];
+	    char stylebuf[TEMP_BUF_SIZE];
+	    char sizebuf[TEMP_BUF_SIZE];
+	    char encodingbuf[TEMP_BUF_SIZE];
 	    char *found;
 
 	    found = names[0];
 
-	    name_part(found, name);
-	    style_part(found, style);
-	    size_part(found, size, data->in_pixels);
-	    encoding_part(found, encoding);
+	    name_part(found, namebuf);
+	    style_part(found, stylebuf);
+	    size_part(found, sizebuf, data->in_pixels);
+	    encoding_part(found, encodingbuf);
 
-	    if (strlen(name) > 0
-		    && strlen(style) > 0
-		    && strlen(size) > 0
-		    && strlen(encoding) > 0)
+	    if (*namebuf != NUL
+		    && *stylebuf != NUL
+		    && *sizebuf != NUL
+		    && *encodingbuf != NUL)
 	    {
-		data->sel[NAME] = XtNewString(name);
-		data->sel[STYLE] = XtNewString(style);
-		data->sel[SIZE] = XtNewString(size);
-		data->sel[ENCODING] = XtNewString(encoding);
+		data->sel[NAME] = XtNewString(namebuf);
+		data->sel[STYLE] = XtNewString(stylebuf);
+		data->sel[SIZE] = XtNewString(sizebuf);
+		data->sel[ENCODING] = XtNewString(encodingbuf);
 		data->font_name = XtNewString(names[0]);
 		display_sample(data);
 		XmTextSetString(data->name, data->font_name);
@@ -1275,13 +1274,12 @@ gui_xm_select_font(char_u *current)
 	XtAppProcessEvent(XtWidgetToApplicationContext(data->dialog),
 							(XtInputMask)XtIMAll);
 
-    XtDestroyWidget(data->dialog);
-
     if (data->old)
     {
 	XFreeFont(XtDisplay(data->dialog),  data->old);
 	XmFontListFree(data->old_list);
     }
+    XtDestroyWidget(data->dialog);
 
     gui_motif_synch_fonts();
 

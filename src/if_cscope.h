@@ -25,7 +25,6 @@
 
 #define CSCOPE_SUCCESS		0
 #define CSCOPE_FAILURE		-1
-#define CSCOPE_MAX_CONNECTIONS	8   /* you actually need more? */
 
 #define	CSCOPE_DBFILE		"cscope.out"
 #define	CSCOPE_PROMPT		">> "
@@ -42,17 +41,6 @@
  * f 7name	Find this file
  * i 8name	Find files #including this file
  */
-#define	FIND_USAGE "find c|d|e|f|g|i|s|t name"
-#define FIND_HELP "\n\
-       c: Find functions calling this function\n\
-       d: Find functions called by this function\n\
-       e: Find this egrep pattern\n\
-       f: Find this file\n\
-       g: Find this definition\n\
-       i: Find files #including this file\n\
-       s: Find this C symbol\n\
-       t: Find assignments to\n"
-
 
 typedef struct {
     char *  name;

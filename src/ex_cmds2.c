@@ -28,7 +28,8 @@ typedef struct scriptitem_S
 {
     char_u	*sn_name;
 # ifdef UNIX
-    int		sn_dev;
+    int		sn_dev_valid;
+    dev_t	sn_dev;
     ino_t	sn_ino;
 # endif
 # ifdef FEAT_PROFILE
@@ -680,10 +681,9 @@ ex_breakdel(eap)
 /*
  * ":breaklist".
  */
-/*ARGSUSED*/
     void
 ex_breaklist(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     struct debuggy *bp;
     int		i;
@@ -1092,7 +1092,7 @@ ex_profile(eap)
 	set_vim_var_nr(VV_PROFILING, 1L);
     }
     else if (do_profiling == PROF_NONE)
-	EMSG(_("E750: First use :profile start <fname>"));
+	EMSG(_("E750: First use \":profile start {fname}\""));
     else if (STRCMP(eap->arg, "pause") == 0)
     {
 	if (do_profiling == PROF_YES)
@@ -1113,6 +1113,77 @@ ex_profile(eap)
 	/* The rest is similar to ":breakadd". */
 	ex_breakadd(eap);
     }
+}
+
+/* Command line expansion for :profile. */
+static enum
+{
+    PEXP_SUBCMD,	/* expand :profile sub-commands */
+    PEXP_FUNC,		/* expand :profile func {funcname} */
+} pexpand_what;
+
+static char *pexpand_cmds[] = {
+			"start",
+#define PROFCMD_START	0
+			"pause",
+#define PROFCMD_PAUSE	1
+			"continue",
+#define PROFCMD_CONTINUE 2
+			"func",
+#define PROFCMD_FUNC	3
+			"file",
+#define PROFCMD_FILE	4
+			NULL
+#define PROFCMD_LAST	5
+};
+
+/*
+ * Function given to ExpandGeneric() to obtain the profile command
+ * specific expansion.
+ */
+    char_u *
+get_profile_name(xp, idx)
+    expand_T	*xp UNUSED;
+    int		idx;
+{
+    switch (pexpand_what)
+    {
+    case PEXP_SUBCMD:
+	return (char_u *)pexpand_cmds[idx];
+    /* case PEXP_FUNC: TODO */
+    default:
+	return NULL;
+    }
+}
+
+/*
+ * Handle command line completion for :profile command.
+ */
+    void
+set_context_in_profile_cmd(xp, arg)
+    expand_T	*xp;
+    char_u	*arg;
+{
+    char_u	*end_subcmd;
+
+    /* Default: expand subcommands. */
+    xp->xp_context = EXPAND_PROFILE;
+    pexpand_what = PEXP_SUBCMD;
+    xp->xp_pattern = arg;
+
+    end_subcmd = skiptowhite(arg);
+    if (*end_subcmd == NUL)
+	return;
+
+    if (end_subcmd - arg == 5 && STRNCMP(arg, "start", 5) == 0)
+    {
+	xp->xp_context = EXPAND_FILES;
+	xp->xp_pattern = skipwhite(end_subcmd);
+	return;
+    }
+
+    /* TODO: expand function names after "func" */
+    xp->xp_context = EXPAND_NOTHING;
 }
 
 /*
@@ -1342,14 +1413,13 @@ autowrite_all()
 /*
  * return TRUE if buffer was changed and cannot be abandoned.
  */
-/*ARGSUSED*/
     int
 check_changed(buf, checkaw, mult_win, forceit, allbuf)
     buf_T	*buf;
     int		checkaw;	/* do autowrite if buffer was changed */
     int		mult_win;	/* check also when several wins for the buf */
     int		forceit;
-    int		allbuf;		/* may write all buffers */
+    int		allbuf UNUSED;	/* may write all buffers */
 {
     if (       !forceit
 	    && bufIsChanged(buf)
@@ -1759,12 +1829,11 @@ set_arglist(str)
  *
  * Return FAIL for failure, OK otherwise.
  */
-/*ARGSUSED*/
     static int
 do_arglist(str, what, after)
     char_u	*str;
-    int		what;
-    int		after;		/* 0 means before first one */
+    int		what UNUSED;
+    int		after UNUSED;		/* 0 means before first one */
 {
     garray_T	new_ga;
     int		exp_count;
@@ -2132,8 +2201,8 @@ do_argfile(eap, argn)
 	 * argument index. */
 	if (do_ecmd(0, alist_name(&ARGLIST[curwin->w_arg_idx]), NULL,
 		      eap, ECMD_LAST,
-		      (P_HID(curwin->w_buffer) ? ECMD_HIDE : 0) +
-				   (eap->forceit ? ECMD_FORCEIT : 0)) == FAIL)
+		      (P_HID(curwin->w_buffer) ? ECMD_HIDE : 0)
+			 + (eap->forceit ? ECMD_FORCEIT : 0), curwin) == FAIL)
 	    curwin->w_arg_idx = old_arg_idx;
 	/* like Vi: set the mark where the cursor is in the file. */
 	else if (eap->cmdidx != CMD_argdo)
@@ -2498,14 +2567,15 @@ ex_compiler(eap)
 		 * To remain backwards compatible "current_compiler" is always
 		 * used.  A user's compiler plugin may set it, the distributed
 		 * plugin will then skip the settings.  Afterwards set
-		 * "b:current_compiler" and restore "current_compiler". */
-		old_cur_comp = get_var_value((char_u *)"current_compiler");
+		 * "b:current_compiler" and restore "current_compiler".
+		 * Explicitly prepend "g:" to make it work in a function. */
+		old_cur_comp = get_var_value((char_u *)"g:current_compiler");
 		if (old_cur_comp != NULL)
 		    old_cur_comp = vim_strsave(old_cur_comp);
 		do_cmdline_cmd((char_u *)
 			      "command -nargs=* CompilerSet setlocal <args>");
 	    }
-	    do_unlet((char_u *)"current_compiler", TRUE);
+	    do_unlet((char_u *)"g:current_compiler", TRUE);
 	    do_unlet((char_u *)"b:current_compiler", TRUE);
 
 	    sprintf((char *)buf, "compiler/%s.vim", eap->arg);
@@ -2516,7 +2586,7 @@ ex_compiler(eap)
 	    do_cmdline_cmd((char_u *)":delcommand CompilerSet");
 
 	    /* Set "b:current_compiler" from "current_compiler". */
-	    p = get_var_value((char_u *)"current_compiler");
+	    p = get_var_value((char_u *)"g:current_compiler");
 	    if (p != NULL)
 		set_internal_string_var((char_u *)"b:current_compiler", p);
 
@@ -2525,12 +2595,12 @@ ex_compiler(eap)
 	    {
 		if (old_cur_comp != NULL)
 		{
-		    set_internal_string_var((char_u *)"current_compiler",
+		    set_internal_string_var((char_u *)"g:current_compiler",
 								old_cur_comp);
 		    vim_free(old_cur_comp);
 		}
 		else
-		    do_unlet((char_u *)"current_compiler", TRUE);
+		    do_unlet((char_u *)"g:current_compiler", TRUE);
 	    }
 	}
     }
@@ -2549,11 +2619,10 @@ ex_runtime(eap)
 
 static void source_callback __ARGS((char_u *fname, void *cookie));
 
-/*ARGSUSED*/
     static void
 source_callback(fname, cookie)
     char_u	*fname;
-    void	*cookie;
+    void	*cookie UNUSED;
 {
     (void)do_source(fname, FALSE, DOSO_NONE);
 }
@@ -2680,10 +2749,9 @@ do_in_runtimepath(name, all, callback, cookie)
 /*
  * ":options"
  */
-/*ARGSUSED*/
     void
 ex_options(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     cmd_source((char_u *)SYS_OPTWIN_FILE, NULL);
 }
@@ -2756,7 +2824,7 @@ struct source_cookie
     FILE	*fp;		/* opened file for sourcing */
     char_u      *nextline;      /* if not NULL: line that was read ahead */
     int		finished;	/* ":finish" used */
-#if defined (USE_CRNL) || defined (USE_CR)
+#if defined(USE_CRNL) || defined(USE_CR)
     int		fileformat;	/* EOL_UNKNOWN, EOL_UNIX or EOL_DOS */
     int		error;		/* TRUE if LF found after CR-LF */
 #endif
@@ -2805,20 +2873,35 @@ source_level(cookie)
 
 static char_u *get_one_sourceline __ARGS((struct source_cookie *sp));
 
-#if defined(WIN32) && defined(FEAT_CSCOPE)
+#if (defined(WIN32) && defined(FEAT_CSCOPE)) || defined(HAVE_FD_CLOEXEC)
+# define USE_FOPEN_NOINH
 static FILE *fopen_noinh_readbin __ARGS((char *filename));
 
 /*
  * Special function to open a file without handle inheritance.
+ * When possible the handle is closed on exec().
  */
     static FILE *
 fopen_noinh_readbin(filename)
     char    *filename;
 {
+# ifdef WIN32
     int	fd_tmp = mch_open(filename, O_RDONLY | O_BINARY | O_NOINHERIT, 0);
+# else
+    int	fd_tmp = mch_open(filename, O_RDONLY, 0);
+# endif
 
     if (fd_tmp == -1)
 	return NULL;
+
+# ifdef HAVE_FD_CLOEXEC
+    {
+	int fdflags = fcntl(fd_tmp, F_GETFD);
+	if (fdflags >= 0 && (fdflags & FD_CLOEXEC) == 0)
+	    fcntl(fd_tmp, F_SETFD, fdflags | FD_CLOEXEC);
+    }
+# endif
+
     return fdopen(fd_tmp, READBIN);
 }
 #endif
@@ -2842,6 +2925,7 @@ do_source(fname, check_other, is_vimrc)
     linenr_T		    save_sourcing_lnum;
     char_u		    *p;
     char_u		    *fname_exp;
+    char_u		    *firstline = NULL;
     int			    retval = FAIL;
 #ifdef FEAT_EVAL
     scid_T		    save_current_SID;
@@ -2897,7 +2981,7 @@ do_source(fname, check_other, is_vimrc)
     apply_autocmds(EVENT_SOURCEPRE, fname_exp, fname_exp, FALSE, curbuf);
 #endif
 
-#if defined(WIN32) && defined(FEAT_CSCOPE)
+#ifdef USE_FOPEN_NOINH
     cookie.fp = fopen_noinh_readbin((char *)fname_exp);
 #else
     cookie.fp = mch_fopen((char *)fname_exp, READBIN);
@@ -2918,7 +3002,7 @@ do_source(fname, check_other, is_vimrc)
 		*p = '.';
 	    else
 		*p = '_';
-#if defined(WIN32) && defined(FEAT_CSCOPE)
+#ifdef USE_FOPEN_NOINH
 	    cookie.fp = fopen_noinh_readbin((char *)fname_exp);
 #else
 	    cookie.fp = mch_fopen((char *)fname_exp, READBIN);
@@ -2992,23 +3076,6 @@ do_source(fname, check_other, is_vimrc)
 
     cookie.level = ex_nesting_level;
 #endif
-#ifdef FEAT_MBYTE
-    cookie.conv.vc_type = CONV_NONE;		/* no conversion */
-
-    /* Try reading the first few bytes to check for a UTF-8 BOM. */
-    {
-	char_u	    buf[3];
-
-	if (fread((char *)buf, sizeof(char_u), (size_t)3, cookie.fp)
-								  == (size_t)3
-		&& buf[0] == 0xef && buf[1] == 0xbb && buf[2] == 0xbf)
-	    /* Found BOM, setup conversion and skip over it. */
-	    convert_setup(&cookie.conv, (char_u *)"utf-8", p_enc);
-	else
-	    /* No BOM found, rewind. */
-	    fseek(cookie.fp, 0L, SEEK_SET);
-    }
-#endif
 
     /*
      * Keep the sourcing name/lnum, for recursive calls.
@@ -3018,8 +3085,30 @@ do_source(fname, check_other, is_vimrc)
     save_sourcing_lnum = sourcing_lnum;
     sourcing_lnum = 0;
 
+#ifdef FEAT_MBYTE
+    cookie.conv.vc_type = CONV_NONE;		/* no conversion */
+
+    /* Read the first line so we can check for a UTF-8 BOM. */
+    firstline = getsourceline(0, (void *)&cookie, 0);
+    if (firstline != NULL && STRLEN(firstline) >= 3 && firstline[0] == 0xef
+			      && firstline[1] == 0xbb && firstline[2] == 0xbf)
+    {
+	/* Found BOM; setup conversion, skip over BOM and recode the line. */
+	convert_setup(&cookie.conv, (char_u *)"utf-8", p_enc);
+	p = string_convert(&cookie.conv, firstline + 3, NULL);
+	if (p == NULL)
+	    p = vim_strsave(firstline + 3);
+	if (p != NULL)
+	{
+	    vim_free(firstline);
+	    firstline = p;
+	}
+    }
+#endif
+
 #ifdef STARTUPTIME
-    time_push(&tv_rel, &tv_start);
+    if (time_fd != NULL)
+	time_push(&tv_rel, &tv_start);
 #endif
 
 #ifdef FEAT_EVAL
@@ -3049,7 +3138,7 @@ do_source(fname, check_other, is_vimrc)
 		    /* Compare dev/ino when possible, it catches symbolic
 		     * links.  Also compare file names, the inode may change
 		     * when the file was edited. */
-		    ((stat_ok && si->sn_dev != -1)
+		    ((stat_ok && si->sn_dev_valid)
 			&& (si->sn_dev == st.st_dev
 			    && si->sn_ino == st.st_ino)) ||
 # endif
@@ -3076,11 +3165,12 @@ do_source(fname, check_other, is_vimrc)
 # ifdef UNIX
 	if (stat_ok)
 	{
+	    si->sn_dev_valid = TRUE;
 	    si->sn_dev = st.st_dev;
 	    si->sn_ino = st.st_ino;
 	}
 	else
-	    si->sn_dev = -1;
+	    si->sn_dev_valid = FALSE;
 # endif
 
 	/* Allocate the local script variables to use for this script. */
@@ -3111,9 +3201,8 @@ do_source(fname, check_other, is_vimrc)
     /*
      * Call do_cmdline, which will call getsourceline() to get the lines.
      */
-    do_cmdline(NULL, getsourceline, (void *)&cookie,
+    do_cmdline(firstline, getsourceline, (void *)&cookie,
 				     DOCMD_VERBOSE|DOCMD_NOWAIT|DOCMD_REPEAT);
-
     retval = OK;
 
 #ifdef FEAT_PROFILE
@@ -3145,9 +3234,12 @@ do_source(fname, check_other, is_vimrc)
 	verbose_leave();
     }
 #ifdef STARTUPTIME
-    vim_snprintf(IObuff, IOSIZE, "sourcing %s", fname);
-    time_msg(IObuff, &tv_start);
-    time_pop(&tv_rel);
+    if (time_fd != NULL)
+    {
+	vim_snprintf((char *)IObuff, IOSIZE, "sourcing %s", fname);
+	time_msg((char *)IObuff, &tv_start);
+	time_pop(&tv_rel);
+    }
 #endif
 
 #ifdef FEAT_EVAL
@@ -3171,6 +3263,7 @@ almosttheend:
 #endif
     fclose(cookie.fp);
     vim_free(cookie.nextline);
+    vim_free(firstline);
 #ifdef FEAT_MBYTE
     convert_setup(&cookie.conv, NULL, NULL);
 #endif
@@ -3185,10 +3278,9 @@ theend:
 /*
  * ":scriptnames"
  */
-/*ARGSUSED*/
     void
 ex_scriptnames(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     int i;
 
@@ -3312,12 +3404,11 @@ fgets_cr(s, n, stream)
  * Return a pointer to the line in allocated memory.
  * Return NULL for end-of-file or some error.
  */
-/* ARGSUSED */
     char_u *
 getsourceline(c, cookie, indent)
-    int		c;		/* not used */
+    int		c UNUSED;
     void	*cookie;
-    int		indent;		/* not used */
+    int		indent UNUSED;
 {
     struct source_cookie *sp = (struct source_cookie *)cookie;
     char_u		*line;
@@ -3368,7 +3459,7 @@ getsourceline(c, cookie, indent)
 	    p = skipwhite(sp->nextline);
 	    if (*p != '\\')
 		break;
-	    s = alloc((int)(STRLEN(line) + STRLEN(p)));
+	    s = alloc((unsigned)(STRLEN(line) + STRLEN(p)));
 	    if (s == NULL)	/* out of memory */
 		break;
 	    STRCPY(s, line);
@@ -3644,10 +3735,9 @@ script_line_end()
  * ":scriptencoding": Set encoding conversion for a sourced script.
  * Without the multi-byte feature it's simply ignored.
  */
-/*ARGSUSED*/
     void
 ex_scriptencoding(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
 #ifdef FEAT_MBYTE
     struct source_cookie	*sp;
@@ -3767,6 +3857,7 @@ ex_checktime(eap)
 
 #if (defined(HAVE_LOCALE_H) || defined(X_LOCALE)) \
 	&& (defined(FEAT_EVAL) || defined(FEAT_MULTI_LANG))
+# define HAVE_GET_LOCALE_VAL
 static char *get_locale_val __ARGS((int what));
 
     static char *
@@ -3856,7 +3947,7 @@ get_mess_lang()
 {
     char_u *p;
 
-# if (defined(HAVE_LOCALE_H) || defined(X_LOCALE))
+# ifdef HAVE_GET_LOCALE_VAL
 #  if defined(LC_MESSAGES)
     p = (char_u *)get_locale_val(LC_MESSAGES);
 #  else
@@ -3907,7 +3998,7 @@ get_mess_env()
 	    p = mch_getenv((char_u *)"LANG");
 	    if (p != NULL && VIM_ISDIGIT(*p))
 		p = NULL;		/* ignore something like "1043" */
-# if defined(HAVE_LOCALE_H) || defined(X_LOCALE)
+# ifdef HAVE_GET_LOCALE_VAL
 	    if (p == NULL || *p == NUL)
 		p = (char_u *)get_locale_val(LC_CTYPE);
 # endif
@@ -3928,7 +4019,7 @@ set_lang_var()
 {
     char_u	*loc;
 
-# if defined(HAVE_LOCALE_H) || defined(X_LOCALE)
+# ifdef HAVE_GET_LOCALE_VAL
     loc = (char_u *)get_locale_val(LC_CTYPE);
 # else
     /* setlocale() not supported: use the default value */
@@ -3938,14 +4029,14 @@ set_lang_var()
 
     /* When LC_MESSAGES isn't defined use the value from $LC_MESSAGES, fall
      * back to LC_CTYPE if it's empty. */
-# if (defined(HAVE_LOCALE_H) || defined(X_LOCALE)) && defined(LC_MESSAGES)
+# if defined(HAVE_GET_LOCALE_VAL) && defined(LC_MESSAGES)
     loc = (char_u *)get_locale_val(LC_MESSAGES);
 # else
     loc = get_mess_env();
 # endif
     set_vim_var_string(VV_LANG, loc, -1);
 
-# if defined(HAVE_LOCALE_H) || defined(X_LOCALE)
+# ifdef HAVE_GET_LOCALE_VAL
     loc = (char_u *)get_locale_val(LC_TIME);
 # endif
     set_vim_var_string(VV_LC_TIME, loc, -1);
@@ -4069,18 +4160,6 @@ ex_language(eap)
 		    set_helplang_default(mname);
 #endif
 		}
-
-		/* Set $LC_CTYPE, because it overrules $LANG, and
-		 * gtk_set_locale() calls setlocale() again.  gnome_init()
-		 * sets $LC_CTYPE to "en_US" (that's a bug!). */
-		if (what != VIM_LC_MESSAGES)
-		    vim_setenv((char_u *)"LC_CTYPE", name);
-# ifdef FEAT_GUI_GTK
-		/* Let GTK know what locale we're using.  Not sure this is
-		 * really needed... */
-		if (gui.in_use)
-		    (void)gtk_set_locale();
-# endif
 	    }
 
 # ifdef FEAT_EVAL
@@ -4096,10 +4175,9 @@ ex_language(eap)
  * Function given to ExpandGeneric() to obtain the possible arguments of the
  * ":language" command.
  */
-/*ARGSUSED*/
     char_u *
 get_lang_arg(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     if (idx == 0)

@@ -37,8 +37,6 @@
  * 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA
  */
 
-/* RCS_ID("$Id: pty.c,v 1.1 2004/06/13 20:04:27 vimboss Exp $ FAU") */
-
 #include "vim.h"
 
 #include <signal.h>
@@ -134,7 +132,7 @@ static void initmaster __ARGS((int));
 
     static void
 initmaster(f)
-    int f;
+    int f UNUSED;
 {
 #ifndef VMS
 # ifdef POSIX
@@ -270,17 +268,20 @@ OpenPTY(ttyn)
 }
 #endif
 
-#if defined(HAVE_SVR4_PTYS) && !defined(PTY_DONE) && !defined(hpux)
+#if defined(HAVE_SVR4_PTYS) && !defined(PTY_DONE) && !defined(hpux) && !defined(MACOS_X)
 
-/* NOTE: Even though HPUX can have /dev/ptmx, the code below doesn't work! */
+/* NOTE: Even though HPUX can have /dev/ptmx, the code below doesn't work!
+ * Same for Mac OS X Leopard. */
 #define PTY_DONE
     int
 OpenPTY(ttyn)
     char **ttyn;
 {
     int		f;
-    char	*m, *ptsname();
-    int unlockpt __ARGS((int)), grantpt __ARGS((int));
+    char	*m;
+    char	*(ptsname __ARGS((int)));
+    int		unlockpt __ARGS((int));
+    int		grantpt __ARGS((int));
     RETSIGTYPE (*sigcld)__ARGS(SIGPROTOARG);
     /* used for opening a new pty-pair: */
     static char TtyName[32];

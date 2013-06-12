@@ -8,7 +8,7 @@
  */
 
 /*
- * diff.c: code for diff'ing two or three buffers.
+ * diff.c: code for diff'ing two, three or four buffers.
  */
 
 #include "vim.h"
@@ -73,6 +73,8 @@ diff_buf_delete(buf)
 	{
 	    tp->tp_diffbuf[i] = NULL;
 	    tp->tp_diff_invalid = TRUE;
+	    if (tp == curtab)
+		diff_redraw(TRUE);
 	}
     }
 }
@@ -102,6 +104,7 @@ diff_buf_adjust(win)
 	    {
 		curtab->tp_diffbuf[i] = NULL;
 		curtab->tp_diff_invalid = TRUE;
+		diff_redraw(TRUE);
 	    }
 	}
     }
@@ -113,7 +116,7 @@ diff_buf_adjust(win)
  * Add a buffer to make diffs for.
  * Call this when a new buffer is being edited in the current window where
  * 'diff' is set.
- * Marks the current buffer as being part of the diff and requireing updating.
+ * Marks the current buffer as being part of the diff and requiring updating.
  * This must be done before any autocmd, because a command may use info
  * about the screen contents.
  */
@@ -131,6 +134,7 @@ diff_buf_add(buf)
 	{
 	    curtab->tp_diffbuf[i] = buf;
 	    curtab->tp_diff_invalid = TRUE;
+	    diff_redraw(TRUE);
 	    return;
 	}
 
@@ -648,10 +652,9 @@ diff_write(buf, fname)
  * The buffers are written to a file, also for unmodified buffers (the file
  * could have been produced by autocommands, e.g. the netrw plugin).
  */
-/*ARGSUSED*/
     void
 ex_diffupdate(eap)
-    exarg_T	*eap;	    /* can be NULL, it's not used */
+    exarg_T	*eap UNUSED;	    /* can be NULL */
 {
     buf_T	*buf;
     int		idx_orig;
@@ -661,6 +664,7 @@ ex_diffupdate(eap)
     char_u	*tmp_diff;
     FILE	*fd;
     int		ok;
+    int		io_error = FALSE;
 
     /* Delete all diffblocks. */
     diff_clear(curtab);
@@ -697,18 +701,26 @@ ex_diffupdate(eap)
     {
 	ok = FALSE;
 	fd = mch_fopen((char *)tmp_orig, "w");
-	if (fd != NULL)
+	if (fd == NULL)
+	    io_error = TRUE;
+	else
 	{
-	    fwrite("line1\n", (size_t)6, (size_t)1, fd);
+	    if (fwrite("line1\n", (size_t)6, (size_t)1, fd) != 1)
+		io_error = TRUE;
 	    fclose(fd);
 	    fd = mch_fopen((char *)tmp_new, "w");
-	    if (fd != NULL)
+	    if (fd == NULL)
+		io_error = TRUE;
+	    else
 	    {
-		fwrite("line2\n", (size_t)6, (size_t)1, fd);
+		if (fwrite("line2\n", (size_t)6, (size_t)1, fd) != 1)
+		    io_error = TRUE;
 		fclose(fd);
 		diff_file(tmp_orig, tmp_new, tmp_diff);
 		fd = mch_fopen((char *)tmp_diff, "r");
-		if (fd != NULL)
+		if (fd == NULL)
+		    io_error = TRUE;
+		else
 		{
 		    char_u	linebuf[LBUFLEN];
 
@@ -761,6 +773,8 @@ ex_diffupdate(eap)
     }
     if (!ok)
     {
+	if (io_error)
+	    EMSG(_("E810: Cannot read or write temp files"));
 	EMSG(_("E97: Cannot create diffs"));
 	diff_a_works = MAYBE;
 #if defined(MSWIN) || defined(MSDOS)
@@ -812,6 +826,7 @@ diff_file(tmp_orig, tmp_new, tmp_diff)
     char_u	*tmp_diff;
 {
     char_u	*cmd;
+    size_t	len;
 
 #ifdef FEAT_EVAL
     if (*p_dex != NUL)
@@ -820,8 +835,9 @@ diff_file(tmp_orig, tmp_new, tmp_diff)
     else
 #endif
     {
-	cmd = alloc((unsigned)(STRLEN(tmp_orig) + STRLEN(tmp_new)
-				+ STRLEN(tmp_diff) + STRLEN(p_srr) + 27));
+	len = STRLEN(tmp_orig) + STRLEN(tmp_new)
+				      + STRLEN(tmp_diff) + STRLEN(p_srr) + 27;
+	cmd = alloc((unsigned)len);
 	if (cmd != NULL)
 	{
 	    /* We don't want $DIFF_OPTIONS to get in the way. */
@@ -831,7 +847,7 @@ diff_file(tmp_orig, tmp_new, tmp_diff)
 	    /* Build the diff command and execute it.  Always use -a, binary
 	     * differences are of no use.  Ignore errors, diff returns
 	     * non-zero when differences have been found. */
-	    sprintf((char *)cmd, "diff %s%s%s%s%s %s",
+	    vim_snprintf((char *)cmd, len, "diff %s%s%s%s%s %s",
 		    diff_a_works == FALSE ? "" : "-a ",
 #if defined(MSWIN) || defined(MSDOS)
 		    diff_bin_works == TRUE ? "--binary " : "",
@@ -841,7 +857,7 @@ diff_file(tmp_orig, tmp_new, tmp_diff)
 		    (diff_flags & DIFF_IWHITE) ? "-b " : "",
 		    (diff_flags & DIFF_ICASE) ? "-i " : "",
 		    tmp_orig, tmp_new);
-	    append_redir(cmd, p_srr, tmp_diff);
+	    append_redir(cmd, (int)len, p_srr, tmp_diff);
 #ifdef FEAT_AUTOCMD
 	    block_autocmds();	/* Avoid ShellCmdPost stuff */
 #endif
@@ -866,6 +882,7 @@ ex_diffpatch(eap)
     char_u	*tmp_orig;	/* name of original temp file */
     char_u	*tmp_new;	/* name of patched temp file */
     char_u	*buf = NULL;
+    size_t	buflen;
     win_T	*old_curwin = curwin;
     char_u	*newname = NULL;	/* name of patched file buffer */
 #ifdef UNIX
@@ -876,6 +893,7 @@ ex_diffpatch(eap)
     char_u	*browseFile = NULL;
     int		browse_flag = cmdmod.browse;
 #endif
+    struct stat st;
 
 #ifdef FEAT_BROWSE
     if (cmdmod.browse)
@@ -905,16 +923,17 @@ ex_diffpatch(eap)
     /* Get the absolute path of the patchfile, changing directory below. */
     fullname = FullName_save(eap->arg, FALSE);
 #endif
-    buf = alloc((unsigned)(STRLEN(tmp_orig) + (
+    buflen = STRLEN(tmp_orig) + (
 # ifdef UNIX
 		    fullname != NULL ? STRLEN(fullname) :
 # endif
-		    STRLEN(eap->arg)) + STRLEN(tmp_new) + 16));
+		    STRLEN(eap->arg)) + STRLEN(tmp_new) + 16;
+    buf = alloc((unsigned)buflen);
     if (buf == NULL)
 	goto theend;
 
 #ifdef UNIX
-    /* Temporaraly chdir to /tmp, to avoid patching files in the current
+    /* Temporarily chdir to /tmp, to avoid patching files in the current
      * directory when the patch file contains more than one patch.  When we
      * have our own temp dir use that instead, it will be cleaned up when we
      * exit (any .rej files created).  Don't change directory if we can't
@@ -925,10 +944,10 @@ ex_diffpatch(eap)
     {
 # ifdef TEMPDIRNAMES
 	if (vim_tempdir != NULL)
-	    mch_chdir((char *)vim_tempdir);
+	    ignored = mch_chdir((char *)vim_tempdir);
 	else
 # endif
-	    mch_chdir("/tmp");
+	    ignored = mch_chdir("/tmp");
 	shorten_fnames(TRUE);
     }
 #endif
@@ -946,7 +965,8 @@ ex_diffpatch(eap)
     {
 	/* Build the patch command and execute it.  Ignore errors.  Switch to
 	 * cooked mode to allow the user to respond to prompts. */
-	sprintf((char *)buf, "patch -o %s %s < \"%s\"", tmp_new, tmp_orig,
+	vim_snprintf((char *)buf, buflen, "patch -o %s %s < \"%s\"",
+		tmp_new, tmp_orig,
 # ifdef UNIX
 		fullname != NULL ? fullname :
 # endif
@@ -980,44 +1000,51 @@ ex_diffpatch(eap)
     STRCAT(buf, ".rej");
     mch_remove(buf);
 
-    if (curbuf->b_fname != NULL)
+    /* Only continue if the output file was created. */
+    if (mch_stat((char *)tmp_new, &st) < 0 || st.st_size == 0)
+	EMSG(_("E816: Cannot read patch output"));
+    else
     {
-	newname = vim_strnsave(curbuf->b_fname,
+	if (curbuf->b_fname != NULL)
+	{
+	    newname = vim_strnsave(curbuf->b_fname,
 					  (int)(STRLEN(curbuf->b_fname) + 4));
-	if (newname != NULL)
-	    STRCAT(newname, ".new");
-    }
+	    if (newname != NULL)
+		STRCAT(newname, ".new");
+	}
 
 #ifdef FEAT_GUI
-    need_mouse_correct = TRUE;
+	need_mouse_correct = TRUE;
 #endif
-    /* don't use a new tab page, each tab page has its own diffs */
-    cmdmod.tab = 0;
+	/* don't use a new tab page, each tab page has its own diffs */
+	cmdmod.tab = 0;
 
-    if (win_split(0, (diff_flags & DIFF_VERTICAL) ? WSP_VERT : 0) != FAIL)
-    {
-	/* Pretend it was a ":split fname" command */
-	eap->cmdidx = CMD_split;
-	eap->arg = tmp_new;
-	do_exedit(eap, old_curwin);
-
-	if (curwin != old_curwin)		/* split must have worked */
+	if (win_split(0, (diff_flags & DIFF_VERTICAL) ? WSP_VERT : 0) != FAIL)
 	{
-	    /* Set 'diff', 'scrollbind' on and 'wrap' off. */
-	    diff_win_options(curwin, TRUE);
-	    diff_win_options(old_curwin, TRUE);
+	    /* Pretend it was a ":split fname" command */
+	    eap->cmdidx = CMD_split;
+	    eap->arg = tmp_new;
+	    do_exedit(eap, old_curwin);
 
-	    if (newname != NULL)
+	    /* check that split worked and editing tmp_new */
+	    if (curwin != old_curwin && win_valid(old_curwin))
 	    {
-		/* do a ":file filename.new" on the patched buffer */
-		eap->arg = newname;
-		ex_file(eap);
+		/* Set 'diff', 'scrollbind' on and 'wrap' off. */
+		diff_win_options(curwin, TRUE);
+		diff_win_options(old_curwin, TRUE);
+
+		if (newname != NULL)
+		{
+		    /* do a ":file filename.new" on the patched buffer */
+		    eap->arg = newname;
+		    ex_file(eap);
 
 #ifdef FEAT_AUTOCMD
-		/* Do filetype detection with the new name. */
-		if (au_has_group((char_u *)"filetypedetect"))
-		    do_cmdline_cmd((char_u *)":doau filetypedetect BufRead");
+		    /* Do filetype detection with the new name. */
+		    if (au_has_group((char_u *)"filetypedetect"))
+			do_cmdline_cmd((char_u *)":doau filetypedetect BufRead");
 #endif
+		}
 	    }
 	}
     }
@@ -1074,10 +1101,9 @@ ex_diffsplit(eap)
 /*
  * Set options to show difs for the current window.
  */
-/*ARGSUSED*/
     void
 ex_diffthis(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     /* Set 'diff', 'scrollbind' on and 'wrap' off. */
     diff_win_options(curwin, TRUE);
@@ -1091,26 +1117,35 @@ diff_win_options(wp, addbuf)
     win_T	*wp;
     int		addbuf;		/* Add buffer to diff. */
 {
+# ifdef FEAT_FOLDING
+    win_T *old_curwin = curwin;
+
+    /* close the manually opened folds */
+    curwin = wp;
+    newFoldLevel();
+    curwin = old_curwin;
+# endif
+
     wp->w_p_diff = TRUE;
+#ifdef FEAT_CURSORBIND
+    /* Use cursorbind if it's available */
+    wp->w_p_crb = TRUE;
+#endif
     wp->w_p_scb = TRUE;
     wp->w_p_wrap = FALSE;
 # ifdef FEAT_FOLDING
-    {
-	win_T	    *old_curwin = curwin;
-
-	curwin = wp;
-	curbuf = curwin->w_buffer;
-	set_string_option_direct((char_u *)"fdm", -1, (char_u *)"diff",
+    curwin = wp;
+    curbuf = curwin->w_buffer;
+    set_string_option_direct((char_u *)"fdm", -1, (char_u *)"diff",
 						       OPT_LOCAL|OPT_FREE, 0);
-	curwin = old_curwin;
-	curbuf = curwin->w_buffer;
-	wp->w_p_fdc = diff_foldcolumn;
-	wp->w_p_fen = TRUE;
-	wp->w_p_fdl = 0;
-	foldUpdateAll(wp);
-	/* make sure topline is not halfway a fold */
-	changed_window_setting_win(wp);
-    }
+    curwin = old_curwin;
+    curbuf = curwin->w_buffer;
+    wp->w_p_fdc = diff_foldcolumn;
+    wp->w_p_fen = TRUE;
+    wp->w_p_fdl = 0;
+    foldUpdateAll(wp);
+    /* make sure topline is not halfway a fold */
+    changed_window_setting_win(wp);
 # endif
 #ifdef FEAT_SCROLLBIND
     if (vim_strchr(p_sbo, 'h') == NULL)
@@ -1138,10 +1173,13 @@ ex_diffoff(eap)
 
     for (wp = firstwin; wp != NULL; wp = wp->w_next)
     {
-	if (wp == curwin || eap->forceit)
+	if (wp == curwin || (eap->forceit && wp->w_p_diff))
 	{
 	    /* Set 'diff', 'scrollbind' off and 'wrap' on. */
 	    wp->w_p_diff = FALSE;
+#ifdef FEAT_CURSORBIND
+	    wp->w_p_crb = FALSE;
+#endif
 	    wp->w_p_scb = FALSE;
 	    wp->w_p_wrap = TRUE;
 #ifdef FEAT_FOLDING
@@ -2114,6 +2152,8 @@ ex_diffgetput(eap)
 	    EMSG2(_("E102: Can't find buffer \"%s\""), eap->arg);
 	    return;
 	}
+	if (buf == curbuf)
+	    return;		/* nothing to do */
 	idx_other = diff_buf_idx(buf);
 	if (idx_other == DB_COUNT)
 	{
@@ -2323,7 +2363,7 @@ ex_diffgetput(eap)
     }
 
     /* restore curwin/curbuf and a few other things */
-    if (idx_other == idx_to)
+    if (eap->cmdidx != CMD_diffget)
     {
 	/* Syncing undo only works for the current buffer, but we change
 	 * another buffer.  Sync undo if the command was typed.  This isn't
@@ -2439,6 +2479,77 @@ diff_move_to(dir, count)
 
     return OK;
 }
+
+#if defined(FEAT_CURSORBIND) || defined(PROTO)
+    linenr_T
+diff_get_corresponding_line(buf1, lnum1, buf2, lnum3)
+    buf_T	*buf1;
+    linenr_T	lnum1;
+    buf_T	*buf2;
+    linenr_T	lnum3;
+{
+    int		idx1;
+    int		idx2;
+    diff_T	*dp;
+    int		baseline = 0;
+    linenr_T	lnum2;
+
+    idx1 = diff_buf_idx(buf1);
+    idx2 = diff_buf_idx(buf2);
+    if (idx1 == DB_COUNT || idx2 == DB_COUNT || curtab->tp_first_diff == NULL)
+	return lnum1;
+
+    if (curtab->tp_diff_invalid)
+	ex_diffupdate(NULL);		/* update after a big change */
+
+    if (curtab->tp_first_diff == NULL)		/* no diffs today */
+	return lnum1;
+
+    for (dp = curtab->tp_first_diff; dp != NULL; dp = dp->df_next)
+    {
+	if (dp->df_lnum[idx1] > lnum1)
+	{
+	    lnum2 = lnum1 - baseline;
+	    /* don't end up past the end of the file */
+	    if (lnum2 > buf2->b_ml.ml_line_count)
+		lnum2 = buf2->b_ml.ml_line_count;
+
+	    return lnum2;
+	}
+	else if ((dp->df_lnum[idx1] + dp->df_count[idx1]) > lnum1)
+	{
+	    /* Inside the diffblock */
+	    baseline = lnum1 - dp->df_lnum[idx1];
+	    if (baseline > dp->df_count[idx2])
+		baseline = dp->df_count[idx2];
+
+	    return dp->df_lnum[idx2] + baseline;
+	}
+	else if (   (dp->df_lnum[idx1] == lnum1)
+		 && (dp->df_count[idx1] == 0)
+		 && (dp->df_lnum[idx2] <= lnum3)
+		 && ((dp->df_lnum[idx2] + dp->df_count[idx2]) > lnum3))
+	    /*
+	     * Special case: if the cursor is just after a zero-count
+	     * block (i.e. all filler) and the target cursor is already
+	     * inside the corresponding block, leave the target cursor
+	     * unmoved. This makes repeated CTRL-W W operations work
+	     * as expected.
+	     */
+	    return lnum3;
+	baseline = (dp->df_lnum[idx1] + dp->df_count[idx1])
+				   - (dp->df_lnum[idx2] + dp->df_count[idx2]);
+    }
+
+    /* If we get here then the cursor is after the last diff */
+    lnum2 = lnum1 - baseline;
+    /* don't end up past the end of the file */
+    if (lnum2 > buf2->b_ml.ml_line_count)
+	lnum2 = buf2->b_ml.ml_line_count;
+
+    return lnum2;
+}
+#endif
 
 #if defined(FEAT_FOLDING) || defined(PROTO)
 /*

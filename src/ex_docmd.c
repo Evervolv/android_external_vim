@@ -26,10 +26,12 @@ typedef struct ucmd
     long_u	uc_argt;	/* The argument type */
     char_u	*uc_rep;	/* The command's replacement string */
     long	uc_def;		/* The default value for a range/count */
-    scid_T	uc_scriptID;	/* SID where the command was defined */
     int		uc_compl;	/* completion type */
-# if defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
+# ifdef FEAT_EVAL
+    scid_T	uc_scriptID;	/* SID where the command was defined */
+#  ifdef FEAT_CMDL_COMPL
     char_u	*uc_compl_arg;	/* completion argument if any */
+#  endif
 # endif
 } ucmd_T;
 
@@ -127,8 +129,12 @@ static int	getargopt __ARGS((exarg_T *eap));
 static int	check_more __ARGS((int, int));
 static linenr_T get_address __ARGS((char_u **, int skip, int to_other_file));
 static void	get_flags __ARGS((exarg_T *eap));
-#if !defined(FEAT_PERL) || !defined(FEAT_PYTHON) || !defined(FEAT_TCL) \
-	|| !defined(FEAT_RUBY) || !defined(FEAT_MZSCHEME)
+#if !defined(FEAT_PERL) \
+	|| !defined(FEAT_PYTHON) || !defined(FEAT_PYTHON3) \
+	|| !defined(FEAT_TCL) \
+	|| !defined(FEAT_RUBY) \
+	|| !defined(FEAT_LUA) \
+	|| !defined(FEAT_MZSCHEME)
 # define HAVE_EX_SCRIPT_NI
 static void	ex_script_ni __ARGS((exarg_T *eap));
 #endif
@@ -233,6 +239,7 @@ static void	ex_popup __ARGS((exarg_T *eap));
 #endif
 #ifndef FEAT_SYN_HL
 # define ex_syntax		ex_ni
+# define ex_ownsyntax		ex_ni
 #endif
 #ifndef FEAT_SPELL
 # define ex_spell		ex_ni
@@ -240,6 +247,15 @@ static void	ex_popup __ARGS((exarg_T *eap));
 # define ex_spelldump		ex_ni
 # define ex_spellinfo		ex_ni
 # define ex_spellrepall		ex_ni
+#endif
+#ifndef FEAT_PERSISTENT_UNDO
+# define ex_rundo		ex_ni
+# define ex_wundo		ex_ni
+#endif
+#ifndef FEAT_LUA
+# define ex_lua			ex_script_ni
+# define ex_luado		ex_ni
+# define ex_luafile		ex_ni
 #endif
 #ifndef FEAT_MZSCHEME
 # define ex_mzscheme		ex_script_ni
@@ -252,6 +268,10 @@ static void	ex_popup __ARGS((exarg_T *eap));
 #ifndef FEAT_PYTHON
 # define ex_python		ex_script_ni
 # define ex_pyfile		ex_ni
+#endif
+#ifndef FEAT_PYTHON3
+# define ex_py3			ex_script_ni
+# define ex_py3file		ex_ni
 #endif
 #ifndef FEAT_TCL
 # define ex_tcl			ex_script_ni
@@ -296,6 +316,10 @@ static void	ex_join __ARGS((exarg_T *eap));
 static void	ex_at __ARGS((exarg_T *eap));
 static void	ex_bang __ARGS((exarg_T *eap));
 static void	ex_undo __ARGS((exarg_T *eap));
+#ifdef FEAT_PERSISTENT_UNDO
+static void	ex_wundo __ARGS((exarg_T *eap));
+static void	ex_rundo __ARGS((exarg_T *eap));
+#endif
 static void	ex_redo __ARGS((exarg_T *eap));
 static void	ex_later __ARGS((exarg_T *eap));
 static void	ex_redir __ARGS((exarg_T *eap));
@@ -364,6 +388,7 @@ static void	ex_tag_cmd __ARGS((exarg_T *eap, char_u *name));
 # define ex_function		ex_ni
 # define ex_delfunction		ex_ni
 # define ex_return		ex_ni
+# define ex_oldfiles		ex_ni
 #endif
 static char_u	*arg_all __ARGS((void));
 #ifdef FEAT_SESSION
@@ -436,7 +461,9 @@ static void	ex_folddo __ARGS((exarg_T *eap));
 # define ex_wsverb		ex_ni
 #endif
 #ifndef FEAT_NETBEANS_INTG
+# define ex_nbclose		ex_ni
 # define ex_nbkey		ex_ni
+# define ex_nbstart		ex_ni
 #endif
 
 #ifndef FEAT_EVAL
@@ -834,7 +861,7 @@ do_cmdline(cmdline, getline, cookie, flags)
     if (flags & DOCMD_EXCRESET)
 	save_dbg_stuff(&debug_saved);
     else
-	memset(&debug_saved, 0, 1);
+	vim_memset(&debug_saved, 0, 1);
 
     initial_trylevel = trylevel;
 
@@ -1577,11 +1604,10 @@ free_cmdlines(gap)
  * If "fgetline" is get_loop_line(), return TRUE if the getline it uses equals
  * "func".  * Otherwise return TRUE when "fgetline" equals "func".
  */
-/*ARGSUSED*/
     int
 getline_equal(fgetline, cookie, func)
     char_u	*(*fgetline) __ARGS((int, void *, int));
-    void	*cookie;		/* argument for fgetline() */
+    void	*cookie UNUSED;		/* argument for fgetline() */
     char_u	*(*func) __ARGS((int, void *, int));
 {
 #ifdef FEAT_EVAL
@@ -1609,10 +1635,9 @@ getline_equal(fgetline, cookie, func)
  * If "fgetline" is get_loop_line(), return the cookie used by the original
  * getline function.  Otherwise return "cookie".
  */
-/*ARGSUSED*/
     void *
 getline_cookie(fgetline, cookie)
-    char_u	*(*fgetline) __ARGS((int, void *, int));
+    char_u	*(*fgetline) __ARGS((int, void *, int)) UNUSED;
     void	*cookie;		/* argument for fgetline() */
 {
 # ifdef FEAT_EVAL
@@ -1678,8 +1703,8 @@ do_one_cmd(cmdlinep, sourcing,
     char_u		*errormsg = NULL;	/* error message */
     exarg_T		ea;			/* Ex command arguments */
     long		verbose_save = -1;
-    int			save_msg_scroll = 0;
-    int			did_silent = 0;
+    int			save_msg_scroll = msg_scroll;
+    int			save_msg_silent = -1;
     int			did_esilent = 0;
 #ifdef HAVE_SANDBOX
     int			did_sandbox = FALSE;
@@ -1770,7 +1795,7 @@ do_one_cmd(cmdlinep, sourcing,
 			}
 			if (checkforcmd(&ea.cmd, "browse", 3))
 			{
-#ifdef FEAT_BROWSE
+#ifdef FEAT_BROWSE_CMD
 			    cmdmod.browse = TRUE;
 #endif
 			    continue;
@@ -1857,9 +1882,9 @@ do_one_cmd(cmdlinep, sourcing,
 			}
 			if (!checkforcmd(&ea.cmd, "silent", 3))
 			    break;
-			++did_silent;
+			if (save_msg_silent == -1)
+			    save_msg_silent = msg_silent;
 			++msg_silent;
-			save_msg_scroll = msg_scroll;
 			if (*ea.cmd == '!' && !vim_iswhite(ea.cmd[-1]))
 			{
 			    /* ":silent!", but not "silent !cmd" */
@@ -1885,6 +1910,13 @@ do_one_cmd(cmdlinep, sourcing,
 #ifdef FEAT_WINDOWS
 			cmdmod.split |= WSP_TOP;
 #endif
+			continue;
+
+	    case 'u':	if (!checkforcmd(&ea.cmd, "unsilent", 3))
+			    break;
+			if (save_msg_silent == -1)
+			    save_msg_silent = msg_silent;
+			msg_silent = 0;
 			continue;
 
 	    case 'v':	if (checkforcmd(&ea.cmd, "vertical", 4))
@@ -2524,11 +2556,14 @@ do_one_cmd(cmdlinep, sourcing,
 	    case CMD_leftabove:
 	    case CMD_let:
 	    case CMD_lockmarks:
+	    case CMD_lua:
 	    case CMD_match:
 	    case CMD_mzscheme:
 	    case CMD_perl:
 	    case CMD_psearch:
 	    case CMD_python:
+	    case CMD_py3:
+	    case CMD_python3:
 	    case CMD_return:
 	    case CMD_rightbelow:
 	    case CMD_ruby:
@@ -2685,19 +2720,23 @@ doend:
 
     cmdmod = save_cmdmod;
 
-    if (did_silent > 0)
+    if (save_msg_silent != -1)
     {
 	/* messages could be enabled for a serious error, need to check if the
 	 * counters don't become negative */
-	msg_silent -= did_silent;
-	if (msg_silent < 0)
-	    msg_silent = 0;
+	if (!did_emsg || msg_silent > save_msg_silent)
+	    msg_silent = save_msg_silent;
 	emsg_silent -= did_esilent;
 	if (emsg_silent < 0)
 	    emsg_silent = 0;
 	/* Restore msg_scroll, it's set by file I/O commands, even when no
 	 * message is actually displayed. */
 	msg_scroll = save_msg_scroll;
+
+	/* "silent reg" or "silent echo x" inside "redir" leaves msg_col
+	 * somewhere in the line.  Put it back in the first column. */
+	if (redirecting())
+	    msg_col = 0;
     }
 
 #ifdef HAVE_SANDBOX
@@ -2731,7 +2770,7 @@ checkforcmd(pp, cmd, len)
     int		i;
 
     for (i = 0; cmd[i] != NUL; ++i)
-	if (cmd[i] != (*pp)[i])
+	if (((char_u *)cmd)[i] != (*pp)[i])
 	    break;
     if (i >= len && !isalpha((*pp)[i]))
     {
@@ -2748,11 +2787,10 @@ checkforcmd(pp, cmd, len)
  * "full" is set to TRUE if the whole command name matched.
  * Returns NULL for an ambiguous user command.
  */
-/*ARGSUSED*/
     static char_u *
 find_command(eap, full)
     exarg_T	*eap;
-    int		*full;
+    int		*full UNUSED;
 {
     int		len;
     char_u	*p;
@@ -2788,6 +2826,11 @@ find_command(eap, full)
     {
 	while (ASCII_ISALPHA(*p))
 	    ++p;
+	/* for python 3.x support ":py3", ":python3", ":py3file", etc. */
+	if (eap->cmd[0] == 'p' && eap->cmd[1] == 'y')
+	    while (ASCII_ISALNUM(*p))
+		++p;
+
 	/* check for non-alpha command */
 	if (p == eap->cmd && vim_strchr((char_u *)"@*!=><&~#", *p) != NULL)
 	    ++p;
@@ -2797,7 +2840,7 @@ find_command(eap, full)
 	    /* Check for ":dl", ":dell", etc. to ":deletel": that's
 	     * :delete with the 'l' flag.  Same for 'p'. */
 	    for (i = 0; i < len; ++i)
-		if (eap->cmd[i] != "delete"[i])
+		if (eap->cmd[i] != ((char_u *)"delete")[i])
 		    break;
 	    if (i == len - 1)
 	    {
@@ -2978,11 +3021,13 @@ static struct cmdmod
     {"keepmarks", 3, FALSE},
     {"leftabove", 5, FALSE},
     {"lockmarks", 3, FALSE},
+    {"noautocmd", 3, FALSE},
     {"rightbelow", 6, FALSE},
     {"sandbox", 3, FALSE},
     {"silent", 3, FALSE},
     {"tab", 3, TRUE},
     {"topleft", 2, FALSE},
+    {"unsilent", 3, FALSE},
     {"verbose", 4, TRUE},
     {"vertical", 4, FALSE},
 };
@@ -3000,7 +3045,7 @@ modifier_len(cmd)
 
     if (VIM_ISDIGIT(*cmd))
 	p = skipwhite(skipdigits(cmd));
-    for (i = 0; i < sizeof(cmdmods) / sizeof(struct cmdmod); ++i)
+    for (i = 0; i < (int)(sizeof(cmdmods) / sizeof(struct cmdmod)); ++i)
     {
 	for (j = 0; p[j] != NUL; ++j)
 	    if (p[j] != cmdmods[i].name[j])
@@ -3028,7 +3073,7 @@ cmd_exists(name)
     char_u	*p;
 
     /* Check command modifiers. */
-    for (i = 0; i < sizeof(cmdmods) / sizeof(struct cmdmod); ++i)
+    for (i = 0; i < (int)(sizeof(cmdmods) / sizeof(struct cmdmod)); ++i)
     {
 	for (j = 0; name[j] != NUL; ++j)
 	    if (name[j] != cmdmods[i].name[j])
@@ -3145,17 +3190,15 @@ set_one_cmd_context(xp, buff)
 	    return NULL;
 	}
 	for (ea.cmdidx = (cmdidx_T)0; (int)ea.cmdidx < (int)CMD_SIZE;
-					 ea.cmdidx = (cmdidx_T)((int)ea.cmdidx + 1))
-	    if (STRNCMP(cmdnames[(int)ea.cmdidx].cmd_name, cmd, (size_t)len) == 0)
+				   ea.cmdidx = (cmdidx_T)((int)ea.cmdidx + 1))
+	    if (STRNCMP(cmdnames[(int)ea.cmdidx].cmd_name, cmd,
+							    (size_t)len) == 0)
 		break;
 
 #ifdef FEAT_USR_CMDS
 	if (cmd[0] >= 'A' && cmd[0] <= 'Z')
-	{
 	    while (ASCII_ISALNUM(*p) || *p == '*')	/* Allow * wild card */
 		++p;
-	    len = (int)(p - cmd);
-	}
 #endif
     }
 
@@ -3380,17 +3423,16 @@ set_one_cmd_context(xp, buff)
 	    xp->xp_pattern = bow;
 	xp->xp_context = EXPAND_FILES;
 
-#ifndef BACKSLASH_IN_FILENAME
 	/* For a shell command more chars need to be escaped. */
 	if (usefilter || ea.cmdidx == CMD_bang)
 	{
+#ifndef BACKSLASH_IN_FILENAME
 	    xp->xp_shell = TRUE;
-
+#endif
 	    /* When still after the command name expand executables. */
 	    if (xp->xp_pattern == skipwhite(arg))
 		xp->xp_context = EXPAND_SHELLCMD;
 	}
-#endif
 
 	/* Check for environment variable */
 	if (*xp->xp_pattern == '$'
@@ -3420,6 +3462,11 @@ set_one_cmd_context(xp, buff)
  */
     switch (ea.cmdidx)
     {
+	case CMD_find:
+	case CMD_sfind:
+	case CMD_tabfind:
+	    xp->xp_context = EXPAND_FILES_IN_PATH;
+	    break;
 	case CMD_cd:
 	case CMD_chdir:
 	case CMD_lcd:
@@ -3608,6 +3655,7 @@ set_one_cmd_context(xp, buff)
 	    return set_context_in_autocmd(xp, arg, FALSE);
 
 	case CMD_doautocmd:
+	case CMD_doautoall:
 	    return set_context_in_autocmd(xp, arg, TRUE);
 #endif
 	case CMD_set:
@@ -3680,6 +3728,18 @@ set_one_cmd_context(xp, buff)
 	case CMD_highlight:
 	    set_context_in_highlight_cmd(xp, arg);
 	    break;
+#ifdef FEAT_CSCOPE
+	case CMD_cscope:
+	case CMD_lcscope:
+	case CMD_scscope:
+	    set_context_in_cscope_cmd(xp, arg, ea.cmdidx);
+	    break;
+#endif
+#ifdef FEAT_SIGNS
+	case CMD_sign:
+	    set_context_in_sign_cmd(xp, arg);
+	    break;
+#endif
 #ifdef FEAT_LISTCMDS
 	case CMD_bdelete:
 	case CMD_bwipeout:
@@ -3725,26 +3785,28 @@ set_one_cmd_context(xp, buff)
 	case CMD_omap:	    case CMD_onoremap:
 	case CMD_imap:	    case CMD_inoremap:
 	case CMD_cmap:	    case CMD_cnoremap:
+	case CMD_lmap:	    case CMD_lnoremap:
 	    return set_context_in_map_cmd(xp, cmd, arg, forceit,
-							FALSE, FALSE, ea.cmdidx);
+						     FALSE, FALSE, ea.cmdidx);
 	case CMD_unmap:
 	case CMD_nunmap:
 	case CMD_vunmap:
 	case CMD_ounmap:
 	case CMD_iunmap:
 	case CMD_cunmap:
+	case CMD_lunmap:
 	    return set_context_in_map_cmd(xp, cmd, arg, forceit,
-							 FALSE, TRUE, ea.cmdidx);
+						      FALSE, TRUE, ea.cmdidx);
 	case CMD_abbreviate:	case CMD_noreabbrev:
 	case CMD_cabbrev:	case CMD_cnoreabbrev:
 	case CMD_iabbrev:	case CMD_inoreabbrev:
 	    return set_context_in_map_cmd(xp, cmd, arg, forceit,
-							 TRUE, FALSE, ea.cmdidx);
+						      TRUE, FALSE, ea.cmdidx);
 	case CMD_unabbreviate:
 	case CMD_cunabbrev:
 	case CMD_iunabbrev:
 	    return set_context_in_map_cmd(xp, cmd, arg, forceit,
-							  TRUE, TRUE, ea.cmdidx);
+						       TRUE, TRUE, ea.cmdidx);
 #ifdef FEAT_MENU
 	case CMD_menu:	    case CMD_noremenu:	    case CMD_unmenu:
 	case CMD_amenu:	    case CMD_anoremenu:	    case CMD_aunmenu:
@@ -3768,6 +3830,16 @@ set_one_cmd_context(xp, buff)
 	    xp->xp_pattern = arg;
 	    break;
 
+	case CMD_ownsyntax:
+	    xp->xp_context = EXPAND_OWNSYNTAX;
+	    xp->xp_pattern = arg;
+	    break;
+
+	case CMD_setfiletype:
+	    xp->xp_context = EXPAND_FILETYPE;
+	    xp->xp_pattern = arg;
+	    break;
+
 #if (defined(HAVE_LOCALE_H) || defined(X_LOCALE)) \
 	&& (defined(FEAT_GETTEXT) || defined(FEAT_MBYTE))
 	case CMD_language:
@@ -3780,6 +3852,14 @@ set_one_cmd_context(xp, buff)
 		xp->xp_context = EXPAND_NOTHING;
 	    break;
 #endif
+#if defined(FEAT_PROFILE)
+	case CMD_profile:
+	    set_context_in_profile_cmd(xp, arg);
+	    break;
+#endif
+	case CMD_behave:
+	    xp->xp_context = EXPAND_BEHAVE;
+	    break;
 
 #endif /* FEAT_CMDL_COMPL */
 
@@ -3803,7 +3883,7 @@ skip_range(cmd, ctx)
     char_u	*cmd;
     int		*ctx;	/* pointer to xp_context or NULL */
 {
-    int		delim;
+    unsigned	delim;
 
     while (vim_strchr((char_u *)" \t0123456789.$%'/?-+,;", *cmd) != NULL)
     {
@@ -4656,6 +4736,7 @@ getargopt(eap)
     char_u	*arg = eap->arg + 2;
     int		*pp = NULL;
 #ifdef FEAT_MBYTE
+    int		bad_char_idx;
     char_u	*p;
 #endif
 
@@ -4707,7 +4788,7 @@ getargopt(eap)
     else if (STRNCMP(arg, "bad", 3) == 0)
     {
 	arg += 3;
-	pp = &eap->bad_char;
+	pp = &bad_char_idx;
     }
 #endif
 
@@ -4738,7 +4819,7 @@ getargopt(eap)
     {
 	/* Check ++bad= argument.  Must be a single-byte character, "keep" or
 	 * "drop". */
-	p = eap->cmd + eap->bad_char;
+	p = eap->cmd + bad_char_idx;
 	if (STRICMP(p, "keep") == 0)
 	    eap->bad_char = BAD_KEEP;
 	else if (STRICMP(p, "drop") == 0)
@@ -5033,10 +5114,9 @@ check_more(message, forceit)
 /*
  * Function given to ExpandGeneric() to obtain the list of command names.
  */
-/*ARGSUSED*/
     char_u *
 get_command_name(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     if (idx >= (int)CMD_SIZE)
@@ -5121,7 +5201,11 @@ uc_add_command(name, name_len, rep, argt, def, flags, compl, compl_arg, force)
 	    }
 
 	    vim_free(cmd->uc_rep);
-	    cmd->uc_rep = 0;
+	    cmd->uc_rep = NULL;
+#if defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
+	    vim_free(cmd->uc_compl_arg);
+	    cmd->uc_compl_arg = NULL;
+#endif
 	    break;
 	}
 
@@ -5180,6 +5264,9 @@ static struct
     {EXPAND_AUGROUP, "augroup"},
     {EXPAND_BUFFERS, "buffer"},
     {EXPAND_COMMANDS, "command"},
+#if defined(FEAT_CSCOPE)
+    {EXPAND_CSCOPE, "cscope"},
+#endif
 #if defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
     {EXPAND_USER_DEFINED, "custom"},
     {EXPAND_USER_LIST, "customlist"},
@@ -5189,13 +5276,18 @@ static struct
     {EXPAND_EVENTS, "event"},
     {EXPAND_EXPRESSION, "expression"},
     {EXPAND_FILES, "file"},
+    {EXPAND_FILETYPE, "filetype"},
     {EXPAND_FUNCTIONS, "function"},
     {EXPAND_HELP, "help"},
     {EXPAND_HIGHLIGHT, "highlight"},
     {EXPAND_MAPPINGS, "mapping"},
     {EXPAND_MENUS, "menu"},
+    {EXPAND_OWNSYNTAX, "syntax"},
     {EXPAND_SETTINGS, "option"},
     {EXPAND_SHELLCMD, "shellcmd"},
+#if defined(FEAT_SIGNS)
+    {EXPAND_SIGN, "sign"},
+#endif
     {EXPAND_TAGS, "tag"},
     {EXPAND_TAGS_LISTFILES, "tag_listfiles"},
     {EXPAND_USER_VARS, "var"},
@@ -5479,6 +5571,9 @@ invalid_count:
     return OK;
 }
 
+/*
+ * ":command ..."
+ */
     static void
 ex_command(eap)
     exarg_T   *eap;
@@ -5540,10 +5635,9 @@ ex_command(eap)
  * ":comclear"
  * Clear all user commands, global and for current buffer.
  */
-/*ARGSUSED*/
     void
 ex_comclear(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     uc_clear(&ucmds);
     uc_clear(&curbuf->b_ucmds);
@@ -5910,7 +6004,8 @@ do_ucmd(eap)
     char_u	*q;
 
     char_u	*start;
-    char_u	*end;
+    char_u	*end = NULL;
+    char_u	*ksp;
     size_t	len, totlen;
 
     size_t	split_len = 0;
@@ -5927,16 +6022,51 @@ do_ucmd(eap)
 
     /*
      * Replace <> in the command by the arguments.
+     * First round: "buf" is NULL, compute length, allocate "buf".
+     * Second round: copy result into "buf".
      */
     buf = NULL;
     for (;;)
     {
-	p = cmd->uc_rep;
-	q = buf;
+	p = cmd->uc_rep;    /* source */
+	q = buf;	    /* destination */
 	totlen = 0;
-	while ((start = vim_strchr(p, '<')) != NULL
-	       && (end = vim_strchr(start + 1, '>')) != NULL)
+
+	for (;;)
 	{
+	    start = vim_strchr(p, '<');
+	    if (start != NULL)
+		end = vim_strchr(start + 1, '>');
+	    if (buf != NULL)
+	    {
+		ksp = vim_strchr(p, K_SPECIAL);
+		if (ksp != NULL && (start == NULL || ksp < start || end == NULL)
+			&& ((ksp[1] == KS_SPECIAL && ksp[2] == KE_FILLER)
+# ifdef FEAT_GUI
+			    || (ksp[1] == KS_EXTRA && ksp[2] == (int)KE_CSI)
+# endif
+			    ))
+		{
+		    /* K_SPECIAL han been put in the buffer as K_SPECIAL
+		     * KS_SPECIAL KE_FILLER, like for mappings, but
+		     * do_cmdline() doesn't handle that, so convert it back.
+		     * Also change K_SPECIAL KS_EXTRA KE_CSI into CSI. */
+		    len = ksp - p;
+		    if (len > 0)
+		    {
+			mch_memmove(q, p, len);
+			q += len;
+		    }
+		    *q++ = ksp[1] == KS_SPECIAL ? K_SPECIAL : CSI;
+		    p = ksp + 3;
+		    continue;
+		}
+	    }
+
+	    /* break if there no <item> is found */
+	    if (start == NULL || end == NULL)
+		break;
+
 	    /* Include the '>' */
 	    ++end;
 
@@ -6003,10 +6133,9 @@ get_user_command_name(idx)
 /*
  * Function given to ExpandGeneric() to obtain the list of user command names.
  */
-/*ARGSUSED*/
     char_u *
 get_user_commands(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     if (idx < curbuf->b_ucmds.ga_len)
@@ -6021,17 +6150,16 @@ get_user_commands(xp, idx)
  * Function given to ExpandGeneric() to obtain the list of user command
  * attributes.
  */
-/*ARGSUSED*/
     char_u *
 get_user_cmd_flags(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     static char *user_cmd_flags[] =
 	{"bang", "bar", "buffer", "complete", "count",
 	    "nargs", "range", "register"};
 
-    if (idx >= sizeof(user_cmd_flags) / sizeof(user_cmd_flags[0]))
+    if (idx >= (int)(sizeof(user_cmd_flags) / sizeof(user_cmd_flags[0])))
 	return NULL;
     return (char_u *)user_cmd_flags[idx];
 }
@@ -6039,15 +6167,14 @@ get_user_cmd_flags(xp, idx)
 /*
  * Function given to ExpandGeneric() to obtain the list of values for -nargs.
  */
-/*ARGSUSED*/
     char_u *
 get_user_cmd_nargs(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     static char *user_cmd_nargs[] = {"0", "1", "*", "?", "+"};
 
-    if (idx >= sizeof(user_cmd_nargs) / sizeof(user_cmd_nargs[0]))
+    if (idx >= (int)(sizeof(user_cmd_nargs) / sizeof(user_cmd_nargs[0])))
 	return NULL;
     return (char_u *)user_cmd_nargs[idx];
 }
@@ -6055,10 +6182,9 @@ get_user_cmd_nargs(xp, idx)
 /*
  * Function given to ExpandGeneric() to obtain the list of values for -complete.
  */
-/*ARGSUSED*/
     char_u *
 get_user_cmd_complete(xp, idx)
-    expand_T	*xp;
+    expand_T	*xp UNUSED;
     int		idx;
 {
     return (char_u *)command_complete[idx].name;
@@ -6151,7 +6277,31 @@ parse_compl_arg(value, vallen, complp, argt, compl_arg)
 ex_colorscheme(eap)
     exarg_T	*eap;
 {
-    if (load_colors(eap->arg) == FAIL)
+    if (*eap->arg == NUL)
+    {
+#ifdef FEAT_EVAL
+	char_u *expr = vim_strsave((char_u *)"g:colors_name");
+	char_u *p = NULL;
+
+	if (expr != NULL)
+	{
+	    ++emsg_off;
+	    p = eval_to_string(expr, NULL, FALSE);
+	    --emsg_off;
+	    vim_free(expr);
+	}
+	if (p != NULL)
+	{
+	    MSG(p);
+	    vim_free(p);
+	}
+	else
+	    MSG("default");
+#else
+	MSG(_("unknown"));
+#endif
+    }
+    else if (load_colors(eap->arg) == FAIL)
 	EMSG2(_("E185: Cannot find color scheme %s"), eap->arg);
 }
 
@@ -6236,10 +6386,9 @@ ex_quit(eap)
 /*
  * ":cquit".
  */
-/*ARGSUSED*/
     static void
 ex_cquit(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     getout(1);	/* this does not always pass on the exit code to the Manx
 		   compiler. why? */
@@ -6681,10 +6830,9 @@ ex_goto(eap)
 /*
  * ":shell".
  */
-/*ARGSUSED*/
     static void
 ex_shell(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     do_shell(NULL, 0);
 }
@@ -6988,10 +7136,9 @@ alist_slash_adjust()
 /*
  * ":preserve".
  */
-/*ARGSUSED*/
     static void
 ex_preserve(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     curbuf->b_flags |= BF_PRESERVED;
     ml_preserve(curbuf, TRUE);
@@ -7223,10 +7370,9 @@ ex_tabmove(eap)
 /*
  * :tabs command: List tabs and their contents.
  */
-/*ARGSUSED*/
     static void
 ex_tabs(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     tabpage_T	*tp;
     win_T	*wp;
@@ -7413,7 +7559,6 @@ ex_edit(eap)
 /*
  * ":edit <file>" command and alikes.
  */
-/*ARGSUSED*/
     void
 do_exedit(eap, old_curwin)
     exarg_T	*eap;
@@ -7485,7 +7630,8 @@ do_exedit(eap, old_curwin)
 	/* ":new" or ":tabnew" without argument: edit an new empty buffer */
 	setpcmark();
 	(void)do_ecmd(0, NULL, NULL, eap, ECMD_ONE,
-			       ECMD_HIDE + (eap->forceit ? ECMD_FORCEIT : 0));
+		      ECMD_HIDE + (eap->forceit ? ECMD_FORCEIT : 0),
+		      old_curwin == NULL ? curwin : NULL);
     }
     else if ((eap->cmdidx != CMD_split
 #ifdef FEAT_VERTSPLIT
@@ -7522,7 +7668,7 @@ do_exedit(eap, old_curwin)
 #ifdef FEAT_LISTCMDS
 		    + (eap->cmdidx == CMD_badd ? ECMD_ADDBUF : 0 )
 #endif
-		    ) == FAIL)
+		    , old_curwin == NULL ? curwin : NULL) == FAIL)
 	{
 	    /* Editing the file failed.  If the window was split, close it. */
 #ifdef FEAT_WINDOWS
@@ -7624,10 +7770,9 @@ ex_popup(eap)
 }
 #endif
 
-/*ARGSUSED*/
     static void
 ex_swapname(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     if (curbuf->b_ml.ml_mfp == NULL || curbuf->b_ml.ml_mfp->mf_fname == NULL)
 	MSG(_("No swap file"));
@@ -7640,10 +7785,9 @@ ex_swapname(eap)
  * offset.
  * (1998-11-02 16:21:01  R. Edward Ralston <eralston@computer.org>)
  */
-/*ARGSUSED*/
     static void
 ex_syncbind(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
 #ifdef FEAT_SCROLLBIND
     win_T	*wp;
@@ -7784,10 +7928,10 @@ ex_read(eap)
 		if (*ml_get(lnum) == NUL && u_savedel(lnum, 1L) == OK)
 		{
 		    ml_delete(lnum, FALSE);
-		    deleted_lines_mark(lnum, 1L);
 		    if (curwin->w_cursor.lnum > 1
 					     && curwin->w_cursor.lnum >= lnum)
 			--curwin->w_cursor.lnum;
+		    deleted_lines_mark(lnum, 1L);
 		}
 	    }
 	    redraw_curbuf_later(VALID);
@@ -7803,6 +7947,9 @@ free_cd_dir()
 {
     vim_free(prev_dir);
     prev_dir = NULL;
+
+    vim_free(globaldir);
+    globaldir = NULL;
 }
 #endif
 
@@ -7825,6 +7972,10 @@ ex_cd(eap)
     else
 #endif
     {
+#ifdef FEAT_AUTOCMD
+	if (allbuf_locked())
+	    return;
+#endif
 	if (vim_strchr(p_cpo, CPO_CHDIR) != NULL && curbufIsChanged()
 							     && !eap->forceit)
 	{
@@ -7896,7 +8047,7 @@ ex_cd(eap)
 	    shorten_fnames(TRUE);
 
 	    /* Echo the new current directory if the command was typed. */
-	    if (KeyTyped)
+	    if (KeyTyped || p_verbose >= 5)
 		ex_pwd(eap);
 	}
 	vim_free(tofree);
@@ -7906,10 +8057,9 @@ ex_cd(eap)
 /*
  * ":pwd".
  */
-/*ARGSUSED*/
     static void
 ex_pwd(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     if (mch_dirname(NameBuff, MAXPATHL) == OK)
     {
@@ -8278,7 +8428,7 @@ ex_join(eap)
 	}
 	++eap->line2;
     }
-    do_do_join(eap->line2 - eap->line1 + 1, !eap->forceit);
+    (void)do_join(eap->line2 - eap->line1 + 1, !eap->forceit, TRUE);
     beginline(BL_WHITE | BL_FIX);
     ex_may_print(eap);
 }
@@ -8291,6 +8441,7 @@ ex_at(eap)
     exarg_T	*eap;
 {
     int		c;
+    int		prev_len = typebuf.tb_len;
 
     curwin->w_cursor.lnum = eap->line2;
 
@@ -8316,11 +8467,10 @@ ex_at(eap)
 
 	/*
 	 * Execute from the typeahead buffer.
-	 * Originally this didn't check for the typeahead buffer to be empty,
-	 * thus could read more Ex commands from stdin.  It's not clear why,
-	 * it is certainly unexpected.
+	 * Continue until the stuff buffer is empty and all added characters
+	 * have been consumed.
 	 */
-	while ((!stuff_empty() || typebuf.tb_len > 0) && vpeekc() == ':')
+	while (!stuff_empty() || typebuf.tb_len > prev_len)
 	    (void)do_cmdline(NULL, getexline, NULL, DOCMD_NOWAIT|DOCMD_VERBOSE);
 
 	exec_from_reg = save_efr;
@@ -8340,24 +8490,44 @@ ex_bang(eap)
 /*
  * ":undo".
  */
-/*ARGSUSED*/
     static void
 ex_undo(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     if (eap->addr_count == 1)	    /* :undo 123 */
-	undo_time(eap->line2, FALSE, TRUE);
+	undo_time(eap->line2, FALSE, FALSE, TRUE);
     else
 	u_undo(1);
 }
 
+#ifdef FEAT_PERSISTENT_UNDO
+    static void
+ex_wundo(eap)
+    exarg_T *eap;
+{
+    char_u hash[UNDO_HASH_SIZE];
+
+    u_compute_hash(hash);
+    u_write_undo(eap->arg, eap->forceit, curbuf, hash);
+}
+
+    static void
+ex_rundo(eap)
+    exarg_T *eap;
+{
+    char_u hash[UNDO_HASH_SIZE];
+
+    u_compute_hash(hash);
+    u_read_undo(eap->arg, hash, NULL);
+}
+#endif
+
 /*
  * ":redo".
  */
-/*ARGSUSED*/
     static void
 ex_redo(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     u_redo(1);
 }
@@ -8365,13 +8535,13 @@ ex_redo(eap)
 /*
  * ":earlier" and ":later".
  */
-/*ARGSUSED*/
     static void
 ex_later(eap)
     exarg_T	*eap;
 {
     long	count = 0;
     int		sec = FALSE;
+    int		file = FALSE;
     char_u	*p = eap->arg;
 
     if (*p == NUL)
@@ -8384,13 +8554,16 @@ ex_later(eap)
 	    case 's': ++p; sec = TRUE; break;
 	    case 'm': ++p; sec = TRUE; count *= 60; break;
 	    case 'h': ++p; sec = TRUE; count *= 60 * 60; break;
+	    case 'd': ++p; sec = TRUE; count *= 24 * 60 * 60; break;
+	    case 'f': ++p; file = TRUE; break;
 	}
     }
 
     if (*p != NUL)
 	EMSG2(_(e_invarg2), eap->arg);
     else
-	undo_time(eap->cmdidx == CMD_earlier ? -count : count, sec, FALSE);
+	undo_time(eap->cmdidx == CMD_earlier ? -count : count,
+							    sec, file, FALSE);
 }
 
 /*
@@ -8550,10 +8723,9 @@ ex_redraw(eap)
 /*
  * ":redrawstatus": force redraw of status line(s)
  */
-/*ARGSUSED*/
     static void
 ex_redrawstatus(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
 #if defined(FEAT_WINDOWS)
     int		r = RedrawingDisabled;
@@ -8630,6 +8802,8 @@ ex_mkrc(eap)
     }
 
 #ifdef FEAT_SESSION
+    /* Use the short file name until ":lcd" is used.  We also don't use the
+     * short file name when 'acd' is set, that is checked later. */
     did_lcd = FALSE;
 
     /* ":mkview" or ":mkview 9": generate file name with 'viewdir' */
@@ -8749,8 +8923,8 @@ ex_mkrc(eap)
 		else if (*dirnow != NUL
 			&& (ssop_flags & SSOP_CURDIR) && globaldir != NULL)
 		{
-		    (void)mch_chdir((char *)globaldir);
-		    shorten_fnames(TRUE);
+		    if (mch_chdir((char *)globaldir) == 0)
+			shorten_fnames(TRUE);
 		}
 
 		failed |= (makeopens(fd, dirnow) == FAIL);
@@ -8814,11 +8988,10 @@ theend:
 
 #if ((defined(FEAT_SESSION) || defined(FEAT_EVAL)) && defined(vim_mkdir)) \
 	|| defined(PROTO)
-/*ARGSUSED*/
     int
 vim_mkdir_emsg(name, prot)
     char_u	*name;
-    int		prot;
+    int		prot UNUSED;
 {
     if (vim_mkdir(name, prot) != 0)
     {
@@ -9089,10 +9262,9 @@ ex_startinsert(eap)
 /*
  * ":stopinsert"
  */
-/*ARGSUSED*/
     static void
 ex_stopinsert(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     restart_edit = 0;
     stop_insert_mode = TRUE;
@@ -9366,9 +9538,8 @@ find_cmdline_var(src, usedlen)
 # define SPEC_CLIENT 9
 #endif
     };
-#define SPEC_COUNT  (sizeof(spec_str) / sizeof(char *))
 
-    for (i = 0; i < SPEC_COUNT; ++i)
+    for (i = 0; i < (int)(sizeof(spec_str) / sizeof(char *)); ++i)
     {
 	len = (int)STRLEN(spec_str[i]);
 	if (STRNCMP(src, spec_str[i], len) == 0)
@@ -9506,24 +9677,50 @@ eval_vars(src, srcstart, usedlen, lnump, errormsg, escaped)
 		    break;
 		}
 		s = src + 1;
+		if (*s == '<')		/* "#<99" uses v:oldfiles */
+		    ++s;
 		i = (int)getdigits(&s);
 		*usedlen = (int)(s - src); /* length of what we expand */
 
-		buf = buflist_findnr(i);
-		if (buf == NULL)
+		if (src[1] == '<')
 		{
-		    *errormsg = (char_u *)_("E194: No alternate file name to substitute for '#'");
+		    if (*usedlen < 2)
+		    {
+			/* Should we give an error message for #<text? */
+			*usedlen = 1;
+			return NULL;
+		    }
+#ifdef FEAT_EVAL
+		    result = list_find_str(get_vim_var_list(VV_OLDFILES),
+								     (long)i);
+		    if (result == NULL)
+		    {
+			*errormsg = (char_u *)"";
+			return NULL;
+		    }
+#else
+		    *errormsg = (char_u *)_("E809: #< is not available without the +eval feature");
 		    return NULL;
-		}
-		if (lnump != NULL)
-		    *lnump = ECMD_LAST;
-		if (buf->b_fname == NULL)
-		{
-		    result = (char_u *)"";
-		    valid = 0;	    /* Must have ":p:h" to be valid */
+#endif
 		}
 		else
-		    result = buf->b_fname;
+		{
+		    buf = buflist_findnr(i);
+		    if (buf == NULL)
+		    {
+			*errormsg = (char_u *)_("E194: No alternate file name to substitute for '#'");
+			return NULL;
+		    }
+		    if (lnump != NULL)
+			*lnump = ECMD_LAST;
+		    if (buf->b_fname == NULL)
+		    {
+			result = (char_u *)"";
+			valid = 0;	    /* Must have ":p:h" to be valid */
+		    }
+		    else
+			result = buf->b_fname;
+		}
 		break;
 
 #ifdef FEAT_SEARCHPATH
@@ -9541,6 +9738,15 @@ eval_vars(src, srcstart, usedlen, lnump, errormsg, escaped)
 #ifdef FEAT_AUTOCMD
 	case SPEC_AFILE:	/* file name for autocommand */
 		result = autocmd_fname;
+		if (result != NULL && !autocmd_fname_full)
+		{
+		    /* Still need to turn the fname into a full path.  It is
+		     * postponed to avoid a delay when <afile> is not used. */
+		    autocmd_fname_full = TRUE;
+		    result = FullName_save(autocmd_fname, FALSE);
+		    vim_free(autocmd_fname);
+		    autocmd_fname = result;
+		}
 		if (result == NULL)
 		{
 		    *errormsg = (char_u *)_("E495: no autocommand file name to substitute for \"<afile>\"");
@@ -9684,7 +9890,7 @@ arg_all()
 	}
 
 	/* allocate memory */
-	retval = alloc(len + 1);
+	retval = alloc((unsigned)len + 1);
 	if (retval == NULL)
 	    break;
     }
@@ -10067,7 +10273,7 @@ makeopens(fd, dirnow)
      */
     if (put_line(fd, "let s:sx = expand(\"<sfile>:p:r\").\"x.vim\"") == FAIL
 	    || put_line(fd, "if file_readable(s:sx)") == FAIL
-	    || put_line(fd, "  exe \"source \" . s:sx") == FAIL
+	    || put_line(fd, "  exe \"source \" . fnameescape(s:sx)") == FAIL
 	    || put_line(fd, "endif") == FAIL)
 	return FAIL;
 
@@ -10262,7 +10468,7 @@ put_view(fd, wp, add_edit, flagp, current_arg_idx)
 
     /* Only when part of a session: restore the argument index.  Some
      * arguments may have been deleted, check if the index is valid. */
-    if (wp->w_arg_idx != current_arg_idx && wp->w_arg_idx <= WARGCOUNT(wp)
+    if (wp->w_arg_idx != current_arg_idx && wp->w_arg_idx < WARGCOUNT(wp)
 						      && flagp == &ssop_flags)
     {
 	if (fprintf(fd, "%ldargu", (long)wp->w_arg_idx + 1) < 0
@@ -10485,6 +10691,9 @@ ses_fname(fd, buf, flagp)
     if (buf->b_sfname != NULL
 	    && flagp == &ssop_flags
 	    && (ssop_flags & (SSOP_CURDIR | SSOP_SESDIR))
+#ifdef FEAT_AUTOCHDIR
+	    && !p_acd
+#endif
 	    && !did_lcd)
 	name = buf->b_sfname;
     else
@@ -10689,7 +10898,8 @@ ex_viminfo(eap)
 	p_viminfo = (char_u *)"'100";
     if (eap->cmdidx == CMD_rviminfo)
     {
-	if (read_viminfo(eap->arg, TRUE, TRUE, eap->forceit) == FAIL)
+	if (read_viminfo(eap->arg, VIF_WANT_INFO | VIF_WANT_MARKS
+				  | (eap->forceit ? VIF_FORCEIT : 0)) == FAIL)
 	    EMSG(_("E195: Cannot open viminfo file for reading"));
     }
     else
@@ -10740,6 +10950,24 @@ ex_behave(eap)
     else
 	EMSG2(_(e_invarg2), eap->arg);
 }
+
+#if defined(FEAT_CMDL_COMPL) || defined(PROTO)
+/*
+ * Function given to ExpandGeneric() to obtain the possible arguments of the
+ * ":behave {mswin,xterm}" command.
+ */
+    char_u *
+get_behave_arg(xp, idx)
+    expand_T	*xp UNUSED;
+    int		idx;
+{
+    if (idx == 0)
+	return (char_u *)"mswin";
+    if (idx == 1)
+	return (char_u *)"xterm";
+    return NULL;
+}
+#endif
 
 #ifdef FEAT_AUTOCMD
 static int filetype_detect = FALSE;
@@ -10850,10 +11078,9 @@ ex_setfiletype(eap)
 }
 #endif
 
-/*ARGSUSED*/
     static void
 ex_digraphs(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
 #ifdef FEAT_DIGRAPHS
     if (*eap->arg != NUL)
@@ -10887,10 +11114,9 @@ ex_set(eap)
 /*
  * ":nohlsearch"
  */
-/*ARGSUSED*/
     static void
 ex_nohlsearch(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
     no_hlsearch = TRUE;
     redraw_all_later(SOME_VALID);
@@ -10969,12 +11195,12 @@ ex_match(eap)
 /*
  * ":X": Get crypt key
  */
-/*ARGSUSED*/
     static void
 ex_X(eap)
-    exarg_T	*eap;
+    exarg_T	*eap UNUSED;
 {
-    (void)get_crypt_key(TRUE, TRUE);
+    if (get_crypt_method(curbuf) == 0 || blowfish_self_test() == OK)
+	(void)get_crypt_key(TRUE, TRUE);
 }
 #endif
 

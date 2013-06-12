@@ -66,6 +66,7 @@ LOCAL_SHARED_LIBRARIES += \
 
 LOCAL_CFLAGS += \
 	-DHAVE_CONFIG_H \
+	-DSYS_VIMRC_FILE=\"/system/etc/vimrc\" \
 	-lncurses
 
 LOCAL_MODULE := vim

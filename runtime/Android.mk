@@ -1,7 +1,8 @@
 LOCAL_PATH:= $(call my-dir)
+
 #========================================================
 # vim runtime
-# ========================================================
+#========================================================
 include $(CLEAR_VARS)
 
 LOCAL_MODULE := vim
@@ -11,15 +12,16 @@ runtime_files := \
 	indent.vim \
 	indoff.vim \
 	filetype.vim \
-	ftoff.vim 
+	ftoff.vim
 
 VIM_SHARED := $(TARGET_OUT)/usr/share/$(LOCAL_MODULE)/
 VIM_CONFIGS := $(addprefix $(LOCAL_PATH)/,$(runtime_files))
 $(VIM_CONFIGS): VIM_BINARY := $(LOCAL_MODULE)
 $(VIM_CONFIGS): $(LOCAL_INSTALLED_MODULE)
-#	@echo "Install: $@ -> $(VIM_SHARED)"
+	@echo "Install: $@ -> $(VIM_SHARED)"
 	@mkdir -p $(VIM_SHARED)
 	$(hide) cp $@ $(VIM_SHARED)
+
 
 vim_colors := \
 	default.vim \
@@ -31,6 +33,7 @@ $(VIM_COLORS): $(VIM_CONFIGS)
 	@echo "Install: $@ -> $(VIM_SHARED_COLORS)"
 	@mkdir -p $(VIM_SHARED_COLORS)
 	$(hide) cp $@ $(VIM_SHARED_COLORS)
+
 
 vim_syntax := \
 	awk.vim \
@@ -64,3 +67,15 @@ ALL_DEFAULT_INSTALLED_MODULES += $(VIM_CONFIGS) $(VIM_COLORS) $(VIM_SYNTAX)
 ALL_MODULES.$(LOCAL_MODULE).INSTALLED := \
     $(ALL_MODULES.$(LOCAL_MODULE).INSTALLED) $(VIM_CONFIGS) $(VIM_COLORS) $(VIM_SYNTAX)
 
+#========================================================
+# Vimrc
+#========================================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := vimrc
+LOCAL_MODULE_TAGS := eng
+LOCAL_MODULE_CLASS := ETC
+
+LOCAL_SRC_FILES := vimrc_example.vim
+
+include $(BUILD_PREBUILT)

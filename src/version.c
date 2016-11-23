@@ -50,7 +50,7 @@ make_version(void)
     strcat(longVersion, ")");
 }
 # else
-char	*longVersion = VIM_VERSION_LONG_DATE __DATE__ " " __TIME__ ")";
+char	*longVersion = VIM_VERSION_LONG;
 # endif
 #else
 char	*longVersion = VIM_VERSION_LONG;

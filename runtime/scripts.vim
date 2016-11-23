@@ -337,7 +337,7 @@ else
     set ft=git
 
   " Logcat
-  elseif s:line1 == '--------- beginning of /dev/log/system'
+  elseif s:line1 == '--------- beginning of '
     set ft=logcat
 
    " Gprof (gnu profiler)

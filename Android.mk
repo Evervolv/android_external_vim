@@ -208,5 +208,4 @@ endif
 
 endif
 
-include $(call all-makefiles-under,$(vim_src))
-
+include $(vim_src)/src/xxd/Android.mk

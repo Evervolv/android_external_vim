@@ -1733,17 +1733,6 @@ void mch_memmove(void *, void *, size_t);
 void *vim_memset(void *, int, size_t);
 #endif
 
-#ifdef HAVE_MEMCMP
-# define vim_memcmp(p1, p2, len)   memcmp((p1), (p2), (len))
-#else
-# ifdef HAVE_BCMP
-#  define vim_memcmp(p1, p2, len)   bcmp((p1), (p2), (len))
-# else
-int vim_memcmp(void *, void *, size_t);
-#  define VIM_MEMCMP
-# endif
-#endif
-
 #if defined(UNIX) || defined(FEAT_GUI) || defined(VMS) \
 	|| defined(FEAT_CLIENTSERVER)
 # define USE_INPUT_BUF
@@ -2501,6 +2490,22 @@ typedef enum
 #if (defined(sun) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)) \
 	&& defined(S_ISCHR)
 # define OPEN_CHR_FILES
+#endif
+
+#if defined(HAVE_GETTIMEOFDAY) && defined(HAVE_SYS_TIME_H)
+# define ELAPSED_TIMEVAL
+# define ELAPSED_INIT(v) gettimeofday(&v, NULL)
+# define ELAPSED_FUNC(v) elapsed(&v)
+# define ELAPSED_TYPE struct timeval
+    long elapsed(struct timeval *start_tv);
+#else
+# if defined(WIN32)
+#  define ELAPSED_TICKCOUNT
+#  define ELAPSED_INIT(v) v = GetTickCount()
+#  define ELAPSED_FUNC(v) elapsed(v)
+#  define ELAPSED_TYPE DWORD
+    long elapsed(DWORD start_tick);
+# endif
 #endif
 
 #endif /* VIM__H */

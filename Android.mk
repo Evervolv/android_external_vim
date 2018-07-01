@@ -207,5 +207,3 @@ vim: $(vim_runtime_files)
 endif
 
 endif
-
-include $(vim_src)/src/xxd/Android.mk
